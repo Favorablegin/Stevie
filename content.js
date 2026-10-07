@@ -151,6 +151,7 @@ window.WISSEN = [
     <div class="golden">Wir hören so früh auf, dass Stevie nicht lernen muss, uns mit stärkerem Verhalten zum Aufhören zu bringen.</div>
     <div class="stevie-says"><b>P.S. von Stevie</b>Ich mag euch eigentlich. Ich mag nur nicht, wenn’s plötzlich eng wird. Wenn ihr das hinbekommt, bekomm ich den Rest auch hin.</div>` },
   { id: 'baro', no: '2', title: 'Stevie lesen: das Stress-Barometer', sub: 'Die wichtigste Fähigkeit im Plan', html: '{{BARO}}' },
+  { id: 'signale', no: '2b', title: 'Signal-Lexikon', sub: 'Ohren, Kopf, Schwanz, Körper, Laute – was Stevie euch sagt', html: '{{SIGNALE}}' },
   { id: 'platz', no: '3', title: 'Stevies Platz: Ort und Annäherung', sub: 'Ein fester Ort macht alles berechenbarer', html: `
     <p>Ihr trainiert im normalen Stall. Das hat früher funktioniert, und es funktioniert wieder, wenn der Ort für Stevie berechenbar ist. Deshalb bekommt er einen festen Trainingsplatz: Stevies Platz.</p>
     <h4>So findet ihr Stevies Platz</h4>
@@ -216,4 +217,125 @@ window.WISSEN = [
       <li><a href="https://www.merckvetmanual.com/exotic-and-laboratory-animals/llamas-and-alpacas/management-of-llamas-and-alpacas" target="_blank" rel="noopener">Merck Veterinary Manual: Management of Llamas and Alpacas</a><small>Ergänzend: Haltung, Fußpflege, Gesundheit.</small></li>
     </ol>
     <div class="golden">Nicht: „Wie bekommen wir heute den Fuß?“ Sondern: „Was muss heute passieren, damit Stevie morgen weniger Grund hat, vor uns wegzugehen?“</div>` }
+];
+
+// Signal-Katalog: sev 0 = gutes Zeichen, 1 AUFMERKSAM, 2 ACHTUNG, 3 STOPP; health = möglicher Schmerz
+// Quellen: Trainingsplan (Stress-Barometer) + Open Sanctuary Project (Camelid Body Language: Ears, Tails, Head & Neck; Vocalizations)
+window.SIGNALS = [
+  { id: 'ohren', name: 'Ohren', items: [
+    { n: 'Ohren locker seitlich', sev: 0, d: 'Seitlich, leicht hängend: entspannt.' },
+    { n: 'Ohren nach vorn', sev: 1, d: 'Nach vorn auf euch gerichtet: aufmerksam, beobachtet genau.' },
+    { n: 'Ohren leicht zurück', sev: 1, d: 'Etwas schräg nach hinten geneigt: erstes leichtes Unbehagen.' },
+    { n: 'Ohren angelegt', sev: 2, d: 'Zurückgelegt, aber noch auf Kopfhöhe: deutliches Unbehagen.' },
+    { n: 'Ohren flach + Kopf hoch', sev: 3, d: 'Ganz flach nach hinten gepresst, Kopf hochgenommen: ernste Warnung, Spucken, Kicken oder Weglaufen können folgen.' }
+  ] },
+  { id: 'kopf', name: 'Kopf & Hals', items: [
+    { n: 'Kopf senkt sich', sev: 0, d: 'Nach der Berührung geht der Kopf wieder auf Normalhöhe: Er entspannt sich.' },
+    { n: 'Kopf etwas höher', sev: 1, d: 'Kopf etwas angehoben, Hals leicht gespannt: aufmerksam, neugierig.' },
+    { n: 'Blick zur Hand', sev: 1, d: 'Er kontrolliert, was die Hand macht.' },
+    { n: 'Kopf tief, unsicher', sev: 1, d: 'Kopf unter Rückenhöhe, oft mit Schwanz über dem Rücken: Unsicherheit oder Unterordnung, kein Entspannen.' },
+    { n: 'Hals steil, Kopf hoch', sev: 2, d: 'Hals gerade und deutlich gespannt, Kopf hoch: alarmiert.' },
+    { n: 'Kopf weggedreht', sev: 2, d: 'Kopf hoch und von euch weg: Er möchte Abstand.' },
+    { n: 'Kopf in den Nacken', sev: 2, d: 'Kopf kippt nach hinten Richtung Himmel, Ohren gehen mit: fühlt sich bedroht, warnt.' },
+    { n: 'Spuckdrohung', sev: 3, d: 'Ohren flach, Kopf hoch, Unterlippe hängt, Kopf nach hinten: Gleich wird gespuckt.' }
+  ] },
+  { id: 'schwanz', name: 'Schwanz', items: [
+    { n: 'Schwanz liegt locker an', sev: 0, d: 'Flach am Körper, ohne Spannung: entspannt.' },
+    { n: 'Schwanz leicht angehoben', sev: 1, d: 'Hebt sich in einem kleinen Bogen vom Körper ab: neugierig, aufmerksam.' },
+    { n: 'Schwanz hoch gebogen', sev: 2, d: 'Bogen in Höhe der Rückenlinie oder höher, Ohren meist nach vorn: alarmiert.' },
+    { n: 'Schwanz waagerecht', sev: 2, d: 'Steht gerade waagerecht ab, Ohren oft angelegt: Unmut.' },
+    { n: 'Schwanz steil hoch', sev: 2, d: 'Steil nach oben oder leicht über den Rücken gebogen. Mit Kopf hoch und Ohren hinten: ernster Unmut, Konfrontation (dann STOPP). Mit tiefem Kopf eher Unsicherheit. Beim Kot- oder Harnabsatz normal.' }
+  ] },
+  { id: 'koerper', name: 'Körper', items: [
+    { n: 'Weiche Körperlinie', sev: 0, d: 'Steht gleichmäßig auf allen vier Beinen, keine Spannung.' },
+    { n: 'Kurzes Anspannen', sev: 1, d: 'Ein kurzer Ruck durch den Körper, löst sich gleich wieder.' },
+    { n: 'Gewichtsverlagerung', sev: 1, d: 'Kleine Verlagerung weg von euch oder vom berührten Bein.' },
+    { n: 'Körper hart', sev: 2, d: 'Muskulatur fest, Bewegungen steif.' },
+    { n: 'Einfrieren', sev: 2, d: 'Plötzlich ganz still. Kein Bravsein, sondern oft starker Stress. Auf die Körperspannung achten.' },
+    { n: 'Anlehnen', sev: 2, d: 'Er lehnt sein Gewicht an euch: Balance fehlt. Fuß zurückgeben, mit der Hüfte sanft wegschieben.' },
+    { n: 'Kushen', sev: 3, d: 'Er legt sich hin: Bei Stevie ein klares STOPP. Nicht am Boden weitermachen.' }
+  ] },
+  { id: 'beine', name: 'Beine & Füße', items: [
+    { n: 'Fuß bleibt belastet', sev: 0, d: 'Genau richtig: Der Fuß bleibt bei Berührung am Boden.' },
+    { n: 'Fuß entlastet', sev: 2, d: 'Gewicht geht vom Bein weg, der Fuß wird leicht.' },
+    { n: 'Fuß hochgezogen', sev: 2, d: 'Hebt den Fuß schon bei Berührung: nicht greifen, Hand höher.' },
+    { n: 'Fuß zurückgefordert', sev: 2, d: 'Zieht einen angehobenen Fuß zurück: sofort zurückgeben.' },
+    { n: 'Bein steif', sev: 2, d: 'Knie wird steif, Kraft gegen Kraft: Die Aufgabe ist zu schwer.' },
+    { n: 'Kickdrohung', sev: 3, d: 'Hinterbein zuckt oder hebt sich drohend: Abstand, heute keine Beinarbeit mehr.' },
+    { n: 'Kick', sev: 3, d: 'Abstand. Nächstes Mal deutlich leichter. Wiederholt: erfahrene Hilfe holen.' },
+    { n: 'Lahmt / schont ein Bein', sev: 2, health: true, d: 'Kann auf Schmerzen hinweisen. Nicht weiter trainieren, Bein anschauen lassen.' }
+  ] },
+  { id: 'laute', name: 'Laute', items: [
+    { n: 'Summen', sev: 2, d: 'Eines der wichtigsten leisen Zeichen: Die Aufgabe ist im Moment zu groß.' },
+    { n: 'Klicken / Schnalzen', sev: 1, d: 'Zungenklicken: leichter Unmut, manchmal auch Gruß.' },
+    { n: 'Schnauben', sev: 2, d: 'Kurzes Luftausstoßen: milder Unmut, heißt „Geh weg“.' },
+    { n: 'Grummeln / Knurren', sev: 2, d: 'Tiefes Brummen: verärgert, genervt.' },
+    { n: 'Quieken', sev: 2, d: 'Aufgebracht, wachsende Angst, oft wenn sein Raum verletzt wird. Geht häufig dem Schreien voraus: Abstand!' },
+    { n: 'Alarmruf', sev: 3, d: 'Hohes, stoßweises, quietschiges Rufen: warnt die Herde vor Gefahr.' },
+    { n: 'Schreien', sev: 3, d: 'Extreme Angst. Sofort beenden und Abstand.' },
+    { n: 'Zähneknirschen', sev: 2, health: true, d: 'Kein Laut, aber hörbar: Zeichen für Schmerz oder Unwohlsein. Tierärztlich abklären.' },
+    { n: 'Stöhnen', sev: 2, health: true, d: 'Kann bedeuten, dass er sich unwohl fühlt oder Schmerzen hat.' }
+  ] },
+  { id: 'verhalten', name: 'Verhalten', items: [
+    { n: 'Kaut wieder / frisst', sev: 0, d: 'Bestes Zeichen: Er ist entspannt genug zum Wiederkäuen oder Fressen.' },
+    { n: 'Kommt von selbst näher', sev: 0, d: 'Er sucht eure Nähe. Belohnung: Es passiert nichts.' },
+    { n: 'Kauen stoppt', sev: 1, d: 'Wiederkäuen bricht ab: Er konzentriert sich auf euch.' },
+    { n: 'Frisst nicht mehr', sev: 2, d: 'Ein Stresssignal, kein Ungehorsam: Intensität herunterfahren.' },
+    { n: 'Blick zur Treppe', sev: 2, d: 'Blick oder Schritt Richtung Rückzugsort: leichter werden.' },
+    { n: 'Weggehen', sev: 2, d: 'Nicht folgen. Neu sortieren, leichter weitermachen oder beenden.' },
+    { n: 'Wegspringen', sev: 3, d: 'Plötzliche Flucht: Session ruhig beenden.' },
+    { n: 'Flucht hinter die Treppe', sev: 3, d: 'Session endet. Dort passiert nie etwas.' },
+    { n: 'Spucken', sev: 3, d: 'Session ruhig beenden, Abstand herstellen.' }
+  ] }
+];
+window.SIGMAP = {};
+for (const g of window.SIGNALS) for (const it of g.items) window.SIGMAP[it.n] = Object.assign({ group: g.name }, it);
+// Alte Bezeichnungen aus Version 1
+window.SIGMAP['Kick / Kickdrohung'] = { n: 'Kick / Kickdrohung', sev: 3, group: 'Beine & Füße', d: '' };
+window.SIGMAP['Ohren angelegt'] = window.SIGMAP['Ohren angelegt'];
+
+window.TIPS = [
+  'Aufhören, wenn es gut läuft – nicht erst, wenn es kippt.',
+  'Eine neue Sache pro Session: näher ODER länger ODER tiefer.',
+  'Loslassen, bevor Stevie muss. Das ist der Kern des ganzen Plans.',
+  'Summen heißt: Die Aufgabe ist gerade zu groß. Eine Stufe leichter.',
+  'Einfrieren ist kein Bravsein. Achtet auf die Körperspannung.',
+  'Die Treppe bleibt Stevies Rückzugsort. Dort passiert nie etwas.',
+  'Im Zweifel die leichtere Variante – ohne Diskussion.',
+  'Ein einziger guter Kontakt kann die ganze Session sein.',
+  'Hängt ihr fest: halb so tief, halb so lang, halb so nah.',
+  'Ein Alpaka hebt den Fuß, wenn das Gewicht nicht mehr darauf liegt.',
+  'Hebt Stevie den Fuß bei Berührung: nicht greifen. Hand höher, Kontakt kürzer.',
+  'Mit dem Handrücken kann man nicht greifen – deshalb beginnt alles damit.',
+  'Ein schlechter Tag? Dann ist heute Ruhetag. Auch das ist Training.',
+  'Nie direkt hinter Stevie stehen. Beim Hinterbein nah am Körper bleiben.',
+  'Kopf hoch, Ohren flach, Schwanz steil: Das ist eine ernste Warnung.',
+  'Wiederkäuen während der Session ist eines der besten Zeichen überhaupt.',
+  'Nach einem ACHTUNG wiederholt ihr das Level. Nach einem STOPP: eins tiefer.',
+  'Judiths Futterschale ist kein Nebenschauplatz, sondern ein Grundpfeiler.',
+  'Rückschritte zeigen nur, dass die Anforderung gerade zu hoch war.',
+  'Wenn einer denkt „geht noch“ und der andere „zu viel“: Die leichtere Variante gewinnt.'
+];
+
+window.BADGES = [
+  { id: 'first', icon: '🌱', name: 'Erste Session', req: 'Die erste Session eintragen' },
+  { id: 'week', icon: '📅', name: 'Volle Woche', req: 'Eine Woche mit 4 oder mehr Sessions' },
+  { id: 'calm5', icon: '🍃', name: 'Ruhige Serie', req: '5 Sessions in Folge bei 0 oder 1' },
+  { id: 'early', icon: '✋', name: 'Früh aufgehört', req: '5× aufgehört, obwohl noch mehr gegangen wäre' },
+  { id: 'lighter', icon: '🪶', name: 'Leichter gemacht', req: '3× nach einem ACHTUNG leichter gemacht' },
+  { id: 'detective', icon: '🔍', name: 'Signal-Detektiv', req: '10 Sessions mit eingetragenen Signalen' },
+  { id: 'chew', icon: '🌾', name: 'Wiederkäuer', req: 'Stevie hat während einer Session wiedergekäut' },
+  { id: 'bowl7', icon: '🥣', name: 'Futter-Freundin', req: '7 Tage am Stück Futterschale' },
+  { id: 'bowl30', icon: '🏆', name: 'Futter-Profi', req: '30 Tage Futterschale insgesamt' },
+  { id: 'two', icon: '🤝', name: 'Zwei Vertrauenspersonen', req: 'Eine ruhige Session mit Judith ab Level 2' },
+  { id: 'rest', icon: '🌙', name: 'Ruhetag ist Training', req: 'Bewusst einen Ruhetag eingetragen' },
+  { id: 's25', icon: '⭐', name: '25 Sessions', req: '25 Sessions eingetragen' },
+  { id: 'l3', icon: '🖐️', name: 'Hand auf dem Rücken', req: 'Level 3 geschafft' },
+  { id: 'l5', icon: '🦶', name: 'Hand am Fuß', req: 'Level 5 an einem Bein geschafft' },
+  { id: 'l6', icon: '⬆️', name: 'Fuß hoch!', req: 'Level 6 an einem Bein geschafft' },
+  { id: 'l7', icon: '🤸', name: 'Freihändig', req: 'Level 7 an einem Bein geschafft' },
+  { id: 'cut', icon: '✂️', name: 'Erster Schnitt', req: 'Eine ruhige Session auf Level 9' },
+  { id: 'all4', icon: '👑', name: 'Alle vier Füße', req: 'Level 9 an allen vier Beinen' },
+  { id: 'w8', icon: '🧭', name: 'Ehrlich entschieden', req: 'Woche-8-Check ausgefüllt' },
+  { id: 'stupsi', icon: '🦙', name: 'Stupsi ist dabei', req: 'Die erste Session mit Stupsi' }
 ];
