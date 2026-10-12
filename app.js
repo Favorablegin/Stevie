@@ -136,58 +136,78 @@ function paintSync() {
 }
 function safeRender() { if (sheetOpen) pendingRender = true; else render(); }
 
-// ---------- push (ntfy) ----------
-const NTFY = 'https://ntfy.sh';
+// ---------- push (Web Push über Vercel) ----------
+const API_BASE = /vercel\.app$/.test(location.hostname) ? '' : 'https://stevie-ten.vercel.app';
 const PUSHKINDS = [['session', 'Neue Session der anderen Person'], ['bowl', 'Futterschale fehlt um 19:30'], ['success', 'Erfolge: Level, Abzeichen, Briefe'], ['idle', '3 Tage keine Session']];
-function pushCfg() { return S.settings.push || null; }
-function ensurePush() {
-  if (S.settings.push) return S.settings.push;
-  const r = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), b => (b % 36).toString(36)).join('');
-  const prefs = {}; for (const p of ['F', 'J']) prefs[p] = { session: true, bowl: true, success: true, idle: true };
-  S.settings = Object.assign({}, S.settings, { push: { topics: { F: 'stevie-' + r() + '-f', J: 'stevie-' + r() + '-j' }, prefs }, updatedAt: Date.now() });
-  saveLocal(); dirty = true; sync();
-  return S.settings.push;
+const deviceId = () => { let d = lsGet('stevie.device'); if (!d) { d = uid(); lsSet('stevie.device', d); } return d; };
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function api(body) {
+  return fetch(API_BASE + '/api/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(Object.assign({ code }, body)), keepalive: true }).then(r => r.json()).catch(() => ({}));
 }
-function ntfySend(topic, o) {
-  const q = new URLSearchParams({ title: o.title, click: shareLink(), icon: location.origin + location.pathname.replace(/[^/]*$/, '') + 'icon-192.png' });
-  if (o.tags) q.set('tags', o.tags);
-  if (o.at) q.set('at', String(o.at));
-  if (o.priority) q.set('priority', String(o.priority));
-  return fetch(`${NTFY}/${encodeURIComponent(topic)}${o.seq ? '/' + o.seq : ''}?${q}`, { method: 'POST', body: o.message || '' }).catch(() => { });
+function notify(kind, title, body, opt = {}) {
+  if (!code) return;
+  api({ action: 'notify', kind, title, body, from: me || '', toSelf: !!opt.toSelf, tag: opt.tag || kind });
 }
-function ntfyDel(topic, seq) { return fetch(`${NTFY}/${encodeURIComponent(topic)}/${seq}`, { method: 'DELETE' }).catch(() => { }); }
-function notify(kind, title, message, opt = {}) {
-  const pc = pushCfg(); if (!pc) return;
-  for (const p of ['F', 'J']) {
-    if (!opt.toSelf && p === me) continue;
-    if (!(pc.prefs && pc.prefs[p] && pc.prefs[p][kind])) continue;
-    ntfySend(pc.topics[p], { title, message, tags: opt.tags, at: opt.at, seq: opt.seq, priority: opt.priority });
+function scheduleBowl() { } // erledigt jetzt der Server (Abend-Check)
+function scheduleIdle() { }
+function b64ToBytes(b64) { const p = '='.repeat((4 - b64.length % 4) % 4); const raw = atob((b64 + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, c => c.charCodeAt(0)); }
+async function currentSub() { if (!pushSupported()) return null; const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+async function enablePush() {
+  if (!me) { toast('Bitte zuerst auswählen, wer dieses Handy nutzt.'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { toast('Mitteilungen wurden nicht erlaubt.'); fillPushBox(); return; }
+  const k = await fetch(API_BASE + '/api/push?action=key&code=' + encodeURIComponent(code)).then(r => r.json());
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  const key = b64ToBytes(k.publicKey);
+  if (sub && sub.options && sub.options.applicationServerKey) {
+    const old = new Uint8Array(sub.options.applicationServerKey);
+    if (old.length !== key.length || old.some((x, i) => x !== key[i])) { await sub.unsubscribe(); sub = null; }
   }
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+  const r = await api({ action: 'subscribe', who: me, sub: sub.toJSON(), device: deviceId(), ua: navigator.userAgent });
+  if (r.ok) { lsSet('stevie.pushSync', today() + me); toast('Benachrichtigungen aktiv ✓'); await api({ action: 'test', endpoint: sub.endpoint, title: '🦙 Hallo ' + WHO[me] + '!', body: 'So sehen Stevies Nachrichten aus. Es klappt!' }); }
+  else toast('Hat nicht geklappt – bitte später nochmal.');
+  fillPushBox();
 }
-function scheduleBowl(force) {
-  const pc = pushCfg(); if (!pc || !navigator.onLine) return;
-  const days = [0, 1, 2].map(i => addDays(today(), i));
-  const sig = today() + JSON.stringify(days.map(d => !!(S.bowl[d] && S.bowl[d].done))) + JSON.stringify(pc);
-  if (!force && lsGet('stevie.bowlSched.' + code) === sig) return;
-  const jobs = [];
-  for (const d of days) {
-    const t = D(d); t.setHours(19, 30, 0, 0);
-    const seq = 'bowl-' + d.replace(/-/g, '');
-    for (const p of ['F', 'J']) {
-      const want = pc.prefs[p] && pc.prefs[p].bowl && !(S.bowl[d] && S.bowl[d].done) && t.getTime() > Date.now() + 20000;
-      if (want) jobs.push(ntfySend(pc.topics[p], { title: '🥣 Futterschale für Stevie', message: 'Heute ist noch keine Gute-Nachricht-Mahlzeit eingetragen. Schon erledigt? Kurz in der App abhaken.', tags: 'bowl_with_spoon', at: Math.floor(t.getTime() / 1000), seq }));
-      else jobs.push(ntfyDel(pc.topics[p], seq));
-    }
-  }
-  Promise.all(jobs).then(rs => { if (rs.every(r => r && r.ok)) lsSet('stevie.bowlSched.' + code, sig); });
+async function disablePush() {
+  const sub = await currentSub();
+  if (sub) { await api({ action: 'unsubscribe', endpoint: sub.endpoint }); await sub.unsubscribe(); }
+  toast('Benachrichtigungen auf diesem Handy aus'); fillPushBox();
 }
-function scheduleIdle() {
-  const pc = pushCfg(); if (!pc) return;
-  const at = Math.floor(Date.now() / 1000) + 71 * 3600;
-  for (const p of ['F', 'J']) {
-    if (pc.prefs[p] && pc.prefs[p].idle) ntfySend(pc.topics[p], { title: '🦙 Stevie wartet', message: 'Seit drei Tagen keine Session. Heute eine kurze, leichte Runde? Oder bewusst einen Ruhetag eintragen.', tags: 'hourglass', at, seq: 'idle' });
-    else ntfyDel(pc.topics[p], 'idle');
+async function refreshPushSub() { // hält Zuordnung (wer) und Endpunkt frisch
+  try {
+    if (!pushSupported() || Notification.permission !== 'granted' || !me) return;
+    if (lsGet('stevie.pushSync') === today() + me) return;
+    const sub = await currentSub(); if (!sub) return;
+    const r = await api({ action: 'subscribe', who: me, sub: sub.toJSON(), device: deviceId(), ua: navigator.userAgent });
+    if (r.ok) lsSet('stevie.pushSync', today() + me);
+  } catch { }
+}
+function pushPrefs() { const p = (S.settings.push && S.settings.push.prefs) || {}; return p[me] || { session: true, bowl: true, success: true, idle: true }; }
+function pushSettingsHTML() {
+  return `<div class="card" id="pushCard"><h3>🔔 Benachrichtigungen</h3><div id="pushBox" class="small muted">Lade …</div>
+    ${me ? `<div class="flabel" style="margin-top:12px">Was soll ${WHO[me]} bekommen?</div>${PUSHKINDS.map(([k, l]) => `<label class="toggle" style="margin:6px 0"><input type="checkbox" data-pp="${k}" ${pushPrefs()[k] !== false ? 'checked' : ''}> ${l}</label>`).join('')}` : ''}
+    <p class="small muted" style="margin-bottom:0">Eigene Einträge lösen bei dir keine Session-Nachricht aus. Die Erinnerung an die Futterschale kommt meist zwischen 19:30 und 19:45.</p></div>`;
+}
+async function fillPushBox() {
+  const box = $('#pushBox'); if (!box) return;
+  let html = '';
+  if (!me) html = 'Wählt oben zuerst aus, wer dieses Handy nutzt.';
+  else if (isIOS() && !isStandalone()) html = '<b>Auf dem iPhone nur in der installierten App:</b> In Safari unten auf <b>Teilen</b> → <b>„Zum Home-Bildschirm“</b>. Dann Stevie über das neue Symbol öffnen und hier „Aktivieren“ tippen.';
+  else if (!pushSupported()) html = 'Dieser Browser unterstützt keine Push-Nachrichten. Auf Android bitte Chrome nutzen.';
+  else if (Notification.permission === 'denied') html = 'Mitteilungen sind für Stevie blockiert. In den Handy-Einstellungen bei der App bzw. Website Mitteilungen erlauben, dann hier neu laden.';
+  else {
+    const sub = await currentSub().catch(() => null);
+    const st = await fetch(API_BASE + '/api/push?action=status&code=' + encodeURIComponent(code)).then(r => r.json()).catch(() => ({}));
+    const devs = `<div style="margin-top:8px">Aktive Geräte: Fabi ${st.F ?? '–'} · Judith ${st.J ?? '–'}</div>`;
+    html = sub && Notification.permission === 'granted'
+      ? `<b style="color:var(--b0)">✓ Aktiv auf diesem Handy (${WHO[me]})</b>${devs}<div class="btns"><button class="btn sm" data-act="pushTest">Test senden</button><button class="btn sm ghost" data-act="pushOff">Ausschalten</button></div>`
+      : `Push-Nachrichten direkt von Stevie – bei neuen Sessions, Erfolgen und als Erinnerung an die Futterschale.${devs}<button class="btn primary block" style="margin-top:10px" data-act="pushOn">Benachrichtigungen aktivieren</button>`;
   }
+  box.innerHTML = html;
 }
 
 // ---------- analysis ----------
@@ -1027,6 +1047,7 @@ function noteForm() {
 // Einstellungen
 function shareLink() { return location.origin + location.pathname + '?s=' + encodeURIComponent(code); }
 function settingsSheet() {
+  setTimeout(fillPushBox, 0);
   const size = JSON.stringify(S).length;
   openSheet(`<div class="sheethead"><h2>Einstellungen</h2><button class="x" data-act="closeSheet" aria-label="Schließen">✕</button></div>
     <div class="field"><div class="flabel">Darstellung</div><div class="seg" style="margin:0">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([k, l]) => `<button class="${(lsGet('stevie.theme') || 'auto') === k ? 'on' : ''}" data-act="theme" data-arg="${k}">${l}</button>`).join('')}</div></div>
@@ -1045,27 +1066,6 @@ function settingsSheet() {
     </div>
     <p class="small muted center">Stall-Code: <span class="code" style="display:inline">${esc(code)}</span></p>
     <button class="btn ghost block small" data-act="leave">Diesen Stall auf dem Handy abmelden</button>`);
-}
-
-function pushSettingsHTML() {
-  const pc = pushCfg();
-  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent), isAndroid = /Android/.test(navigator.userAgent);
-  if (!me) return `<div class="card"><h3>🔔 Benachrichtigungen</h3><p class="small muted">Wählt oben zuerst aus, wer dieses Handy nutzt.</p></div>`;
-  if (!pc) return `<div class="card"><h3>🔔 Benachrichtigungen</h3><p class="small muted">Push-Nachrichten bei neuen Sessions, Erfolgen und als Erinnerung an die Futterschale um 19:30. Läuft über die kostenlose App <b>ntfy</b> (iPhone und Android, ohne Konto).</p><button class="btn primary block" data-act="pushSetup">Benachrichtigungen einrichten</button></div>`;
-  const topic = pc.topics[me]; const pr = (pc.prefs && pc.prefs[me]) || {};
-  const store = isIOS ? `<a class="btn sm" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a>` : isAndroid ? `<a class="btn sm" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>` : `<a class="btn sm" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a> <a class="btn sm" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>`;
-  return `<div class="card"><h3>🔔 Benachrichtigungen für ${WHO[me]}</h3>
-    <ol class="steps push">
-      <li><b>ntfy installieren</b> – kostenlos, ohne Konto.<div class="row wrap" style="margin-top:6px">${store}</div></li>
-      <li><b>Thema abonnieren.</b> ${isAndroid ? 'Ein Tipp genügt:' : 'In ntfy auf <b>＋</b> tippen, diesen Namen einfügen und „Abonnieren“ wählen (Server ntfy.sh bleibt so):'}
-        ${isAndroid ? `<div style="margin-top:6px"><a class="btn sm primary" href="ntfy://ntfy.sh/${esc(topic)}">In ntfy abonnieren</a></div>` : ''}
-        <div class="code" style="margin-top:6px">${esc(topic)}</div><button class="btn sm" style="margin-top:6px" data-act="copyTopic">Namen kopieren</button>
-        ${isIOS ? '<div class="small muted" style="margin-top:6px">Beim ersten Start „Mitteilungen erlauben“ bestätigen.</div>' : ''}</li>
-      <li><b>Testen:</b> <button class="btn sm" data-act="pushTest">Test-Nachricht senden</button></li>
-    </ol>
-    <div class="flabel" style="margin-top:10px">Was soll ${WHO[me]} bekommen?</div>
-    ${PUSHKINDS.map(([k, l]) => `<label class="toggle" style="margin:6px 0"><input type="checkbox" data-pp="${k}" ${pr[k] ? 'checked' : ''}> ${l}</label>`).join('')}
-    <p class="small muted">Das Thema ist wie ein Passwort: Nur wer den Namen kennt, bekommt die Nachrichten. Die eigenen Einträge lösen bei dir keine Session-Nachricht aus.</p></div>`;
 }
 
 // ---------- events ----------
@@ -1092,7 +1092,7 @@ document.addEventListener('click', async e => {
       code = v; lsSet('stevie.code', code); history.replaceState(null, '', '?s=' + code);
       S = loadLocal(); render(); askWho(); await sync(); break;
     }
-    case 'setMe': me = arg; lsSet('stevie.me', me); if ($('#setStart')) settingsSheet(); else closeSheet(); toast('Hallo ' + WHO[me] + '!'); break;
+    case 'setMe': me = arg; lsSet('stevie.me', me); lsSet('stevie.pushSync', ''); refreshPushSub(); if ($('#setStart')) settingsSheet(); else closeSheet(); toast('Hallo ' + WHO[me] + '!'); break;
     case 'newSession': openSessionForm(arg || 'stevie'); break;
     case 'editSession': { const s = S.sessions[arg]; if (!s) return; F = Object.assign(defaultForm(s.animal), JSON.parse(JSON.stringify(s)), { erfolg: false }); F.legs = F.legs || []; F.signals = F.signals || []; F.goodday = F.goodday || []; F.sigGroup = 'ohren'; F.lastSig = null; openSheet(sessionForm()); break; }
     case 'f': { const k = el.dataset.k; let v = arg; if (k === 'level' || k === 'baro') v = +v; F[k] = v; if (k === 'level' && v >= 4 && !F.legs.length) { const ov = overview(F.animal); F.legs = [ov.focus || 'VL']; } if (k === 'animal') { const d = defaultForm(v, F.minutes); F.level = d.level; F.legs = d.legs; } rerenderForm(); break; }
@@ -1103,9 +1103,9 @@ document.addEventListener('click', async e => {
     case 'fmin': F.minutes = Math.max(1, Math.min(30, F.minutes + +arg)); rerenderForm(); break;
     case 'saveSession': saveSession(); break;
     case 'pf': PF = arg; render(); break;
-    case 'pushSetup': ensurePush(); settingsSheet(); scheduleBowl(true); break;
-    case 'copyTopic': copy(pushCfg().topics[me]); break;
-    case 'pushTest': ntfySend(pushCfg().topics[me], { title: '🦙 Hallo ' + WHO[me] + '!', message: 'So sehen Stevies Nachrichten aus. Es klappt!', tags: 'white_check_mark' }); toast('Test gesendet – kommt gleich an.'); break;
+    case 'pushOn': el.disabled = true; enablePush().catch(e => { toast('Fehler: ' + (e.message || e)); fillPushBox(); }); break;
+    case 'pushOff': disablePush(); break;
+    case 'pushTest': currentSub().then(sub => sub && api({ action: 'test', endpoint: sub.endpoint, title: '🦙 Test', body: 'Stevie sagt Hallo.' })); toast('Test gesendet'); break;
     case 'hideInstall': lsSet('stevie.installHint', 'x'); render(); break;
     case 'rest': { const d = today(); const on = !(S.rest[d] && S.rest[d].on); S.rest[d] = { on, who: me || '', updatedAt: Date.now() }; commit(on ? 'Ruhetag eingetragen. Auch das ist Training. 🌙' : 'Ruhetag entfernt'); if (on) scheduleIdle(); break; }
     case 'theme': lsSet('stevie.theme', arg); applyTheme(); settingsSheet(); break;
@@ -1150,10 +1150,11 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   if (e.target.dataset.fc && F) F[e.target.dataset.fc] = e.target.checked;
   if (e.target.dataset.pp && me) {
-    const pc = JSON.parse(JSON.stringify(pushCfg()));
-    pc.prefs[me] = Object.assign({}, pc.prefs[me], { [e.target.dataset.pp]: e.target.checked });
-    S.settings = Object.assign({}, S.settings, { push: pc, updatedAt: Date.now() });
-    saveLocal(); dirty = true; sync(); scheduleBowl(true); toast('Gespeichert ✓');
+    const push = JSON.parse(JSON.stringify(S.settings.push || {})); push.prefs = push.prefs || {};
+    push.prefs[me] = Object.assign({ session: true, bowl: true, success: true, idle: true }, push.prefs[me], { [e.target.dataset.pp]: e.target.checked });
+    delete push.topics;
+    S.settings = Object.assign({}, S.settings, { push, updatedAt: Date.now() });
+    saveLocal(); dirty = true; sync(); toast('Gespeichert ✓');
   }
   if (e.target.id === 'importFile') {
     const file = e.target.files[0]; if (!file) return;
@@ -1194,7 +1195,7 @@ document.addEventListener('click', e => { if (e.target.closest('.chip,.baro,.min
 if (code) { lsSet('stevie.code', code); if (params.get('s') !== code) history.replaceState(null, '', '?s=' + code); }
 S = code ? loadLocal() : emptyData();
 render();
-if (code) { if (!me) askWho(); sync(); }
+if (code) { if (!me) askWho(); sync(); setTimeout(refreshPushSub, 3000); }
 setInterval(() => { if (document.visibilityState === 'visible' && !syncState.busy) sync(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(); });
 window.addEventListener('online', sync);
