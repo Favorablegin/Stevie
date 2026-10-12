@@ -121,6 +121,7 @@ async function sync() {
     if (!remote || after !== remoteStable) await push(S);
     dirty = false;
     syncState.ok = true; syncState.err = ''; syncState.last = Date.now();
+    scheduleBowl();
     if (before !== after) safeRender();
   } catch (e) {
     syncState.ok = false; syncState.err = e.message || 'Fehler';
@@ -134,6 +135,60 @@ function paintSync() {
   $('#syncTxt').textContent = syncState.busy ? 'sync …' : syncState.ok ? 'synchron' : syncState.ok === false ? (dirty ? 'lokal gespeichert' : 'offline') : '…';
 }
 function safeRender() { if (sheetOpen) pendingRender = true; else render(); }
+
+// ---------- push (ntfy) ----------
+const NTFY = 'https://ntfy.sh';
+const PUSHKINDS = [['session', 'Neue Session der anderen Person'], ['bowl', 'Futterschale fehlt um 19:30'], ['success', 'Erfolge: Level, Abzeichen, Briefe'], ['idle', '3 Tage keine Session']];
+function pushCfg() { return S.settings.push || null; }
+function ensurePush() {
+  if (S.settings.push) return S.settings.push;
+  const r = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), b => (b % 36).toString(36)).join('');
+  const prefs = {}; for (const p of ['F', 'J']) prefs[p] = { session: true, bowl: true, success: true, idle: true };
+  S.settings = Object.assign({}, S.settings, { push: { topics: { F: 'stevie-' + r() + '-f', J: 'stevie-' + r() + '-j' }, prefs }, updatedAt: Date.now() });
+  saveLocal(); dirty = true; sync();
+  return S.settings.push;
+}
+function ntfySend(topic, o) {
+  const q = new URLSearchParams({ title: o.title, click: shareLink(), icon: location.origin + location.pathname.replace(/[^/]*$/, '') + 'icon-192.png' });
+  if (o.tags) q.set('tags', o.tags);
+  if (o.at) q.set('at', String(o.at));
+  if (o.priority) q.set('priority', String(o.priority));
+  return fetch(`${NTFY}/${encodeURIComponent(topic)}${o.seq ? '/' + o.seq : ''}?${q}`, { method: 'POST', body: o.message || '' }).catch(() => { });
+}
+function ntfyDel(topic, seq) { return fetch(`${NTFY}/${encodeURIComponent(topic)}/${seq}`, { method: 'DELETE' }).catch(() => { }); }
+function notify(kind, title, message, opt = {}) {
+  const pc = pushCfg(); if (!pc) return;
+  for (const p of ['F', 'J']) {
+    if (!opt.toSelf && p === me) continue;
+    if (!(pc.prefs && pc.prefs[p] && pc.prefs[p][kind])) continue;
+    ntfySend(pc.topics[p], { title, message, tags: opt.tags, at: opt.at, seq: opt.seq, priority: opt.priority });
+  }
+}
+function scheduleBowl(force) {
+  const pc = pushCfg(); if (!pc || !navigator.onLine) return;
+  const days = [0, 1, 2].map(i => addDays(today(), i));
+  const sig = today() + JSON.stringify(days.map(d => !!(S.bowl[d] && S.bowl[d].done))) + JSON.stringify(pc);
+  if (!force && lsGet('stevie.bowlSched.' + code) === sig) return;
+  const jobs = [];
+  for (const d of days) {
+    const t = D(d); t.setHours(19, 30, 0, 0);
+    const seq = 'bowl-' + d.replace(/-/g, '');
+    for (const p of ['F', 'J']) {
+      const want = pc.prefs[p] && pc.prefs[p].bowl && !(S.bowl[d] && S.bowl[d].done) && t.getTime() > Date.now() + 20000;
+      if (want) jobs.push(ntfySend(pc.topics[p], { title: '🥣 Futterschale für Stevie', message: 'Heute ist noch keine Gute-Nachricht-Mahlzeit eingetragen. Schon erledigt? Kurz in der App abhaken.', tags: 'bowl_with_spoon', at: Math.floor(t.getTime() / 1000), seq }));
+      else jobs.push(ntfyDel(pc.topics[p], seq));
+    }
+  }
+  Promise.all(jobs).then(rs => { if (rs.every(r => r && r.ok)) lsSet('stevie.bowlSched.' + code, sig); });
+}
+function scheduleIdle() {
+  const pc = pushCfg(); if (!pc) return;
+  const at = Math.floor(Date.now() / 1000) + 71 * 3600;
+  for (const p of ['F', 'J']) {
+    if (pc.prefs[p] && pc.prefs[p].idle) ntfySend(pc.topics[p], { title: '🦙 Stevie wartet', message: 'Seit drei Tagen keine Session. Heute eine kurze, leichte Runde? Oder bewusst einen Ruhetag eintragen.', tags: 'hourglass', at, seq: 'idle' });
+    else ntfyDel(pc.topics[p], 'idle');
+  }
+}
 
 // ---------- analysis ----------
 function sessionsOf(animal) {
@@ -164,6 +219,7 @@ function recFor(t) {
   let r;
   if (b === 3) r = { kind: 'down', level: Math.max(0, x - 1), label: 'Ein Level tiefer', msg: 'Letztes Mal STOPP: Die nächste Session beginnt ein Level tiefer. Kein Rückschritt, sondern ein Fundament.' };
   else if (b === 2) r = { kind: 'repeat', level: x, label: 'Wiederholen', msg: 'Letztes Mal ACHTUNG: Level wiederholen und leichter einsteigen.' };
+  else if (t.streak < 2 && t.achieved[x] !== undefined && x < 9) r = { kind: 'up', level: x + 1, label: 'Zurück nach oben', msg: `Bewusst leichter war gut: Level ${x} sitzt. Nächstes Mal wieder Level ${x + 1}.` };
   else if (t.streak >= 2) r = x >= 9 ? { kind: 'up', level: 9, label: 'Geschafft', msg: 'Level 9 geschafft! Ab und zu eine Bein-Session ohne Schnitt einbauen.' } : { kind: 'up', level: x + 1, label: 'Weiter!', msg: '2 gute Sessions in Folge: weiter zum nächsten Level.' };
   else r = { kind: 'again', level: x, label: 'Noch 1 gute', msg: 'Gute Session! Noch eine gute auf diesem Level, dann geht’s weiter.' };
   if (r.kind !== 'up' && t.levelSince && daysBetween(t.levelSince, today()) > 7) r.stuck = true;
@@ -211,6 +267,12 @@ function planWeek() {
   const sd = S.settings.startDate || today();
   return Math.max(1, Math.floor(daysBetween(sd, today()) / 7) + 1);
 }
+const PHASES = [{ name: 'Ankommen', lv: [0, 1], w: [1, 2] }, { name: 'Erste Berührung', lv: [2, 3], w: [2, 4] }, { name: 'Abwärts', lv: [4, 5], w: [4, 6] }, { name: 'Fuß hoch', lv: [6, 7], w: [6, 8] }, { name: 'Probe & Schnitt', lv: [8, 9], w: [9, 12] }];
+function workingLevel(ov) {
+  if (!ov.legPhase) return ov.main.level ?? 0;
+  return Math.min(ov.legs.VL.level, ov.legs.VR.level);
+}
+function phaseOfLevel(l) { return PHASES.findIndex(p => l >= p.lv[0] && l <= p.lv[1]); }
 function roadmapFor(w) { return P.roadmap.find(r => w >= r.from && w <= r.to) || P.roadmap[P.roadmap.length - 1]; }
 
 // ---------- rendering ----------
@@ -262,9 +324,17 @@ function weekStrip() {
 
 function greeting() { const h = new Date().getHours(); return h < 11 ? 'Guten Morgen' : h < 17 ? 'Hallo' : h < 22 ? 'Guten Abend' : 'Gute Nacht'; }
 function moodOf(ss) {
-  const l = ss.slice(-5); if (l.length < 2) return null;
-  const a = avg(l.map(s => s.baro));
-  return a <= 0.6 ? { icon: '😌', text: 'tiefenentspannt' } : a <= 1.2 ? { icon: '🙂', text: 'gelassen' } : a <= 1.9 ? { icon: '🤨', text: 'wachsam' } : { icon: '😬', text: 'angespannt' };
+  if (!ss.length) return null;
+  const last = ss[ss.length - 1];
+  const age = daysBetween(last.date, today());
+  const l = ss.slice(-5); const wts = [1, 1, 2, 3, 5].slice(-l.length);
+  const w = l.reduce((a, s, i) => a + s.baro * wts[i], 0) / wts.reduce((a, b) => a + b, 0);
+  const score = Math.max(w, last.baro - 0.5);
+  const when = age === 0 ? 'heute' : age === 1 ? 'gestern' : 'vor ' + age + ' Tagen';
+  const m = score <= 0.5 ? { icon: '😌', text: 'entspannt' } : score <= 1.2 ? { icon: '🙂', text: 'gelassen' } : score <= 2 ? { icon: '🤨', text: 'angespannt' } : { icon: '😣', text: 'aufgewühlt' };
+  m.detail = `Letzte Session ${when}: ${P.baro[last.baro].name}`;
+  m.hint = last.baro >= 2 && age <= 2 ? (last.baro === 3 ? 'Nach dem STOPP heute ein Level tiefer beginnen.' : 'Nach dem ACHTUNG heute lieber leichter einsteigen – gern auch ein Level zurück.') : '';
+  return m;
 }
 function viewHeute() {
   const ov = overview('stevie');
@@ -274,10 +344,11 @@ function viewHeute() {
   const doneToday = ss.some(s => s.date === today());
   const last = ss[ss.length - 1];
   let hero = '';
+  void 0;
   if (!ov.legPhase) {
     const r = ov.main; const L = r.level !== null ? lv(r.level) : null;
     hero = `<div class="card hero">${ALP}
-      <div class="eyebrow">Nächste Session</div>
+      <div class="eyebrow">${doneToday ? 'Heute erledigt ✓ · nächstes Mal' : 'Nächste Session'}</div>
       <div class="lvno">Level ${L ? L.n : '–'}</div>
       <h2>${L ? esc(L.name) : 'Start festlegen'}</h2>
       <span class="badge ${r.kind}">${esc(r.label)}</span>
@@ -285,6 +356,8 @@ function viewHeute() {
       ${L ? `<p class="small"><b>Ziel:</b> ${esc(L.goal)}</p>` : ''}
       ${r.stuck ? `<p class="small">💡 Seit über einer Woche auf diesem Level: nächsten Schritt halbieren – halb so tief, halb so lang, halb so nah.</p>` : ''}
       <div class="btns">${L ? `<button class="btn light" data-act="level" data-arg="${L.n}">Anleitung</button>` : ''}<button class="btn light" data-act="startTimer">Session starten</button></div>
+      ${r.kind === 'repeat' && L && L.n > 0 ? `<button class="btn ghost block" style="margin-top:8px;color:inherit;border-color:rgba(255,255,255,.35)" data-act="startTimer" data-arg="${L.n - 1}">Heute lieber Level ${L.n - 1} starten</button>` : ''}
+      <button class="linkbtn" data-act="startTimer">Anderes Level wählen ›</button>
     </div>`;
   } else {
     const fr = ov.legs[ov.focus]; const L = lv(fr.level);
@@ -295,9 +368,10 @@ function viewHeute() {
       <span class="badge ${fr.kind}">${esc(fr.label)}</span>
       <p>${esc(fr.msg)}</p>
       ${fr.stuck ? `<p class="small">💡 Seit über einer Woche auf diesem Level: halb so tief, halb so lang, halb so nah.</p>` : ''}
-      <div class="legs">${LEGS.map(l => { const r = ov.legs[l]; return `<button class="leg" data-act="level" data-arg="${r.level}"><small>${l} · ${LEGNAME[l]}</small><b>Level ${r.level}</b><small>${esc(r.label)}${r.stuck ? ' · 💡' : ''}</small></button>`; }).join('')}</div>
-      <p class="small">Vorderbeine gehen voraus, Hinterbeine dürfen ein oder zwei Level hinterherlaufen.</p>
+      <div class="legs">${LEGS.map(l => { const r = ov.legs[l]; return `<button class="leg" data-act="startTimer" data-arg="${r.level}" data-leg="${l}"><small>${l} · ${LEGNAME[l]}</small><b>Level ${r.level}</b><small>${esc(r.label)}${r.stuck ? ' · 💡' : ''}</small></button>`; }).join('')}</div>
+      <p class="small">Tippt auf ein Bein, um direkt dafür zu starten. Vorderbeine gehen voraus, Hinterbeine dürfen ein oder zwei Level hinterherlaufen.</p>
       <div class="btns"><button class="btn light" data-act="level" data-arg="${L.n}">Anleitung</button><button class="btn light" data-act="startTimer">Session starten</button></div>
+      <button class="linkbtn" data-act="startTimer">Anderes Level oder Bein wählen ›</button>
     </div>`;
   }
   const bowlToday = S.bowl[today()] && S.bowl[today()].done;
@@ -307,6 +381,9 @@ function viewHeute() {
   const wk = Math.min(12, w);
   let tl = ''; for (let i = 1; i <= 12; i++) tl += `<span class="${i < wk ? 'past' : i === wk ? 'now' : ''}">${i}</span>`;
   const week8Due = w >= 8 && !S.week8;
+  const wl = workingLevel(ov); const phIdx = Math.max(0, phaseOfLevel(wl));
+  const exp = PHASES.findIndex(p => w >= p.w[0] && w <= p.w[1]); const expIdx = exp < 0 ? PHASES.length - 1 : exp;
+  const paceText = `Ihr arbeitet an <b>Level ${wl}</b>${ov.legPhase ? ' (Vorderbeine)' : ''}. Laut Kalender (Woche ${Math.min(w, 12)}) wäre <b>${esc(PHASES[expIdx].name)}</b> dran – ` + (phIdx > expIdx ? 'ihr seid schneller als der Richtwert. Völlig okay, solange Stevie meistens bei 0 oder 1 bleibt.' : phIdx < expIdx ? 'ihr seid etwas langsamer als der Richtwert. Kein Rückstand, sondern ein Fundament.' : 'ihr liegt genau im Plan.') + ' <span class="muted">Das Tempo bestimmt Stevie.</span>';
   const stupsiOn = sessionsOf('stupsi').length || achievedAny(analyze('stevie'), 6);
   let stupsi = '';
   if (stupsiOn) {
@@ -325,7 +402,9 @@ function viewHeute() {
   const mood = moodOf(ss);
   return `
     ${install ? `<div class="install"><span class="ic">📲</span><div class="grow"><b>Als App installieren</b><br><span class="small">${isIOS ? 'In Safari unten auf <b>Teilen</b> tippen, dann <b>„Zum Home-Bildschirm“</b>.' : 'Im Browser-Menü <b>⋮</b> auf <b>„App installieren“</b> bzw. „Zum Startbildschirm hinzufügen“ tippen.'}</span></div><button class="x" data-act="hideInstall" aria-label="Ausblenden">✕</button></div>` : ''}
-    <div class="greet"><div><div class="eyebrow">${new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}</div><h1>${greeting()}${me ? ', ' + WHO[me] : ''}</h1></div>${mood ? `<div class="mood" title="Stevies Stimmung der letzten Sessions"><span>${mood.icon}</span><small>${mood.text}</small></div>` : ''}</div>
+    <div class="greet"><div><div class="eyebrow">${new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}</div><h1>${greeting()}${me ? ', ' + WHO[me] : ''}</h1></div>${mood ? `<button class="mood" data-act="moodInfo"><span>${mood.icon}</span><small>${mood.text}</small></button>` : ''}</div>
+    ${mood && mood.hint ? `<div class="moodline"><b>${mood.icon} ${esc(mood.detail)}.</b> ${esc(mood.hint)}</div>` : ''}
+    ${last ? `<div class="stevie-says"><b>Stevie zur letzten Session</b>${esc(window.STEVIE_SAYS[last.baro][(daysBetween('2026-01-01', last.date) + last.minutes) % window.STEVIE_SAYS[last.baro].length])}</div>` : ''}
     ${hero}
     <button class="btn primary block" data-act="newSession" style="min-height:54px;font-size:17px">＋ Session eintragen</button>
     <div class="tip"><span>💡</span><div><div class="eyebrow">Tipp des Tages</div>${esc(tip)}</div></div>
@@ -349,9 +428,10 @@ function viewHeute() {
     </div>
     ${stupsi}
     <div class="card">
-      <div class="row between"><h3>Woche ${w > 12 ? '12+' : w} von 12</h3><button class="btn sm ghost" data-act="wissen" data-arg="fahrplan">Fahrplan</button></div>
-      <div class="timeline">${tl}</div>
-      <p class="small" style="margin:10px 0 0"><b>${esc(rm.phase)}</b> · Level ${esc(rm.lv)}<br><span class="muted">${esc(rm.side)} Die Wochen sind Richtwerte – das Tempo bestimmt Stevie.</span></p>
+      <div class="row between"><div><div class="eyebrow">Fahrplan · Kalenderwoche ${w > 12 ? '12+' : w} von 12</div><h3 style="margin:2px 0 0">Phase: ${esc(PHASES[phIdx].name)}</h3></div><button class="btn sm ghost" data-act="wissen" data-arg="fahrplan">Details</button></div>
+      <div class="roadmap">${PHASES.map((p, i) => `<div class="${i < phIdx ? 'past' : i === phIdx ? 'now' : ''}"><i></i><b>${esc(p.name)}</b><small>L ${p.lv[0]}–${p.lv[1]}</small></div>`).join('')}</div>
+      <div class="wkline">${tl}</div>
+      <p class="small" style="margin:10px 0 0">${paceText}</p>
       ${week8Due ? `<button class="btn terra block" style="margin-top:12px" data-act="tab" data-arg="protokoll" data-sub="woche8">Woche-8-Check ausfüllen</button>` : ''}
     </div>
     <div class="stopword"><span>Stop-Wort</span><b>${esc(S.settings.stopWord || 'STOPP')}</b><span class="small" style="font-weight:600">Hände sofort weg.</span></div>
@@ -378,8 +458,13 @@ function sessionLine(s) {
     ${s.good ? `<p>👍 ${esc(s.good)}</p>` : ''}${s.next ? `<p class="muted">→ ${esc(s.next)}</p>` : ''}
     ${s.signals && s.signals.length ? `<div class="chipline">${s.signals.map(x => `<span class="s${sig(x).sev}">${esc(x)}</span>`).join('')}</div>` : ''}${(s.goodday || []).length ? `<div class="meta">✓ ${s.goodday.length} von 4 „guter Tag“</div>` : ''}</div></button>`;
 }
+let PF = 'alle';
 function sessionList() {
-  const ss = sessionsOf().reverse();
+  const flt = { alle: () => true, F: s => s.who === 'F', J: s => s.who === 'J', stupsi: s => s.animal === 'stupsi', unruhig: s => s.baro >= 2 };
+  const all = sessionsOf();
+  const ss = all.filter(flt[PF] || flt.alle).reverse();
+  const fbar = all.length ? `<div class="chips" style="margin:6px 0 2px">${[['alle', 'Alle'], ['F', 'Fabi'], ['J', 'Judith'], ['unruhig', 'ACHTUNG/STOPP'], ...(all.some(s => s.animal === 'stupsi') ? [['stupsi', 'Stupsi']] : [])].map(([k, l]) => `<button class="chip ${PF === k ? 'on' : ''}" style="min-height:34px;font-size:13px" data-act="pf" data-arg="${k}">${l}</button>`).join('')}</div>` : '';
+  if (all.length && !ss.length) return fbar + `<div class="card empty">Keine Sessions für diesen Filter.</div>`;
   if (!ss.length) return `<div class="card empty"><svg viewBox="0 0 64 64"><use href="#alpaca"/></svg>Noch keine Session. Eine Zeile pro Session, Stichworte reichen.<div class="btns"><button class="btn primary" data-act="newSession">Erste Session eintragen</button></div></div>`;
   let html = '', curW = '';
   for (const s of ss) {
@@ -387,7 +472,7 @@ function sessionList() {
     if (w !== curW) { if (curW) html += '</div>'; curW = w; html += `<div class="eyebrow" style="margin-top:16px">Woche ab ${fmtShort(w)}</div><div class="card" style="padding:4px 14px;margin-top:6px">`; }
     html += sessionLine(s);
   }
-  return html + '</div><p class="small muted center">Tippen zum Bearbeiten oder Löschen.</p>';
+  return fbar + html + '</div><p class="small muted center">Tippen zum Bearbeiten oder Löschen.</p>';
 }
 function levelkarte() {
   const tr = analyze('stevie');
@@ -717,7 +802,7 @@ function closeSheet() {
   sheetOpen = false;
   $('#sheetWrap').hidden = true;
   document.body.style.overflow = '';
-  if (timer) { clearInterval(timer.iv); timer = null; }
+  if (timer) { clearInterval(timer.iv); try { timer.wake && timer.wake.release(); } catch { } timer = null; }
   if (pendingRender) render();
 }
 function toast(msg, undo) {
@@ -805,6 +890,15 @@ function saveSession() {
   closeSheet();
   haptic(20);
   commit(isNew ? 'Gespeichert ✓' : 'Geändert ✓', () => { if (prevCopy) S.sessions[id] = Object.assign(prevCopy, { updatedAt: Date.now() }); else S.sessions[id] = Object.assign({}, S.sessions[id], { deleted: true, updatedAt: Date.now() }); commit('Rückgängig gemacht'); });
+  if (isNew) {
+    const sv = S.sessions[id]; const Lx = lv(sv.level);
+    notify('session', `🦙 ${WHO[sv.who]}: ${ANIMAL[sv.animal]}-Session`, `Level ${sv.level} · ${Lx.name}${sv.legs.length ? ' (' + sv.legs.join(' ') + ')' : ''}
+Barometer ${sv.baro} · ${P.baro[sv.baro].name} · ${sv.minutes} Min.${sv.good ? '\n👍 ' + sv.good : ''}${sv.next ? '\n→ ' + sv.next : ''}`, { tags: ['large_green_circle', 'yellow_circle', 'orange_circle', 'red_circle'][sv.baro] });
+    scheduleIdle();
+  }
+  if (newAch.length) notify('success', `🎉 ${ANIMAL[F.animal]} hat es geschafft!`, newAch.map(x => { const [leg, n] = x.split(':'); return `Level ${n} · ${lv(+n).name}${leg !== 'gesamt' ? ' (' + leg + ')' : ''}`; }).join('\n') + '\n2 gute Sessions in Folge.', { tags: 'tada' });
+  if (newBadges.length) notify('success', '🏅 Neues Abzeichen', newBadges.map(b => { const x = window.BADGES.find(y => y.id === b); return x.icon + ' ' + x.name; }).join('\n'), {});
+  if (newLetters.length) notify('success', '✉️ Post von Stevie ist da', 'Ein neuer Brief wartet in der App unter „Erfolge“.', {});
   if (newAch.length || newBadges.length) { celebrate(F.animal, newAch, newLetters, newBadges); return; }
   else if (isNew) {
     const ov = overview(F.animal);
@@ -858,23 +952,52 @@ function badgesEarned() {
 }
 
 // Timer
-function startTimerSheet() {
-  const ov = overview('stevie');
-  const L = lv(ov.legPhase ? ov.legs[ov.focus].level : (ov.main.level ?? 1));
-  openSheet(`<h2>Vorher: 30-Sekunden-Check</h2><p class="small muted" style="margin:0">Heute dran: <b>Level ${L.n} · ${esc(L.name)}</b>${ov.legPhase ? ' (' + ov.focus + ')' : ''}</p>
-    <ul class="checks pre" id="pre">${P.precheck.map((x, i) => `<li data-act="pre" data-arg="${i}">${esc(x)}</li>`).join('')}</ul>
-    <div class="stopword"><span>Stop-Wort</span><b>${esc(S.settings.stopWord || 'STOPP')}</b></div>
-    <div class="btns"><button class="btn" data-act="closeSheet">Abbrechen</button><button class="btn primary" data-act="goTimer">Los geht’s</button></div>`);
+let TS = null; // gewählte Session
+function recommended(animal = 'stevie') {
+  const ov = overview(animal);
+  if (!ov.legPhase) return { level: ov.main.level ?? 1, legs: [] };
+  return { level: ov.legs[ov.focus].level, legs: [ov.focus] };
+}
+function startTimerSheet(level, leg) {
+  const rec = recommended();
+  TS = { level: level ?? rec.level, legs: leg ? [leg] : rec.legs.slice(), rec, sound: lsGet('stevie.sound') !== '0' };
+  renderStartSheet();
+}
+function renderStartSheet() {
+  const L = lv(TS.level); const ov = overview('stevie');
+  const legsShown = TS.level >= 4 || ov.legPhase;
+  const diff = TS.level - TS.rec.level;
+  openSheet(`<div class="sheethead"><h2>Session starten</h2><button class="x" data-act="closeSheet" aria-label="Schließen">✕</button></div>
+    <div class="formsec"><div class="flabel">Welches Level heute? <span class="badge" style="margin-left:auto">Empfohlen: ${TS.rec.level}</span></div>
+      <div class="lvgrid">${P.levels.map(x => `<button class="chip ${TS.level === x.n ? 'on' : ''} ${TS.rec.level === x.n ? 'rec' : ''}" data-act="tsLevel" data-arg="${x.n}">${x.n}</button>`).join('')}</div>
+      <div class="lvname"><b>${esc(L.name)}</b> · ${esc(L.goal)}</div>
+      ${diff < 0 ? `<div class="sighint" style="background:var(--b0s)">👍 Bewusst leichter – eine gute Entscheidung, wenn die letzte Session anstrengend war. Läuft es ruhig, geht’s danach wieder hoch.</div>` : diff > 0 ? `<div class="sighint" style="background:var(--b2s)">⚠️ Höher als empfohlen. Nur, wenn Stevie das aktuelle Level wirklich sicher kann.</div>` : ''}
+      ${legsShown ? `<div class="flabel" style="margin-top:12px">Bein</div><div class="legpick">${LEGS.map(l => `<button class="chip ${TS.legs.includes(l) ? 'on' : ''}" data-act="tsLeg" data-arg="${l}"><b>${l}</b><small>${ov.legPhase ? 'L ' + ov.legs[l].level : LEGNAME[l]}</small></button>`).join('')}</div>` : ''}
+    </div>
+    <div class="formsec"><div class="flabel">Vorher: 30-Sekunden-Check</div><ul class="checks pre" id="pre">${P.precheck.map((x, i) => `<li data-act="pre" data-arg="${i}">${esc(x)}</li>`).join('')}</ul></div>
+    <label class="toggle"><input type="checkbox" id="tsSound" ${TS.sound ? 'checked' : ''}> Leiser Ton bei jedem Phasenwechsel</label>
+    <div class="btns sticky"><button class="btn" data-act="level" data-arg="${L.n}">Anleitung</button><button class="btn primary" data-act="goTimer">Los geht’s</button></div>`);
+}
+function chime(final) {
+  try {
+    const A = chime.ctx || (chime.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    const notes = final ? [660, 880] : [740];
+    notes.forEach((f, i) => { const o = A.createOscillator(), g = A.createGain(); o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(0.0001, A.currentTime + i * .22); g.gain.exponentialRampToValueAtTime(0.25, A.currentTime + i * .22 + .02); g.gain.exponentialRampToValueAtTime(0.0001, A.currentTime + i * .22 + .6); o.connect(g).connect(A.destination); o.start(A.currentTime + i * .22); o.stop(A.currentTime + i * .22 + .65); });
+  } catch { }
 }
 function runTimer() {
-  const ov = overview('stevie');
-  const L = lv(ov.legPhase ? ov.legs[ov.focus].level : (ov.main.level ?? 1));
+  const L = lv(TS.level);
+  if ($('#tsSound')) { TS.sound = $('#tsSound').checked; lsSet('stevie.sound', TS.sound ? '1' : '0'); }
+  if (TS.sound) { chime.ctx = chime.ctx || new (window.AudioContext || window.webkitAudioContext)(); chime.ctx.resume && chime.ctx.resume(); }
+  if (TS.level >= 4 && !TS.legs.length) TS.legs = [recommended().legs[0] || 'VL'];
   timer = { start: Date.now(), L };
+  try { navigator.wakeLock && navigator.wakeLock.request('screen').then(w => timer && (timer.wake = w)).catch(() => { }); } catch { }
   const ph = P.phases;
-  openSheet(`<div class="timer"><div class="eyebrow">Level ${L.n} · ${esc(L.name)}</div><div class="clock" id="tClock">0:00</div><div class="ph" id="tPh"></div><div class="phh" id="tPhh"></div>
+  openSheet(`<div class="timer"><div class="eyebrow">Level ${L.n} · ${esc(L.name)}${TS.legs.length ? ' · ' + TS.legs.join(' ') : ''}</div><div class="clock" id="tClock">0:00</div><div class="ph" id="tPh"></div><div class="phh" id="tPhh"></div>
     <div class="phbar" id="tBar">${ph.slice(0, 5).map((p, i) => `<span style="flex:${ph[i + 1].t - p.t}"></span>`).join('')}</div>
     <div class="row between small muted"><span>0:00</span><span>5:00</span></div></div>
     <div class="callout"><b>Das Neue heute:</b> ${esc(L.goal)}</div>
+    <details class="more"><summary>So geht’s (Level ${L.n})</summary><ol class="steps">${L.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></details>
     <div class="stopword"><span>Stop-Wort</span><b>${esc(S.settings.stopWord || 'STOPP')}</b><span class="small" style="font-weight:600">Lieber früher aufhören.</span></div>
     <div class="btns"><button class="btn" data-act="closeSheet">Abbrechen</button><button class="btn primary" data-act="stopTimer">Session beenden</button></div>`);
   sheetOpen = true;
@@ -886,7 +1009,7 @@ function runTimer() {
     const p = ph[idx];
     if ($('#tPh')) { $('#tPh').textContent = p.name; $('#tPhh').textContent = p.hint; }
     document.querySelectorAll('#tBar span').forEach((el, i) => el.className = i < idx ? 'past' : i === idx ? 'now' : '');
-    if (idx !== timer.lastIdx) { timer.lastIdx = idx; if (idx > 0 && navigator.vibrate) navigator.vibrate(idx === 5 ? [200, 100, 200] : 120); }
+    if (idx !== timer.lastIdx) { const first = timer.lastIdx === undefined; timer.lastIdx = idx; if (!first) { if (navigator.vibrate) navigator.vibrate(idx === 5 ? [200, 100, 200] : 120); if (TS.sound) chime(idx === 5); } }
   };
   tick(); timer.iv = setInterval(tick, 500);
 }
@@ -913,6 +1036,7 @@ function settingsSheet() {
     <div class="field"><label>Stop-Wort</label><input type="text" id="setStop" value="${esc(S.settings.stopWord || 'STOPP')}"></div>
     <button class="btn primary block" data-act="saveSettings">Speichern</button>
     <hr class="sep">
+    ${pushSettingsHTML()}
     <div class="card"><h3>Sync & Sicherung</h3>
       <p class="small muted">Status: ${syncState.ok ? 'synchron' : syncState.ok === false ? 'nicht erreichbar (' + esc(syncState.err) + ') – alles ist lokal gespeichert und wird nachgeholt' : '…'}${syncState.last ? ' · zuletzt ' + new Date(syncState.last).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : ''}<br>Speicher belegt: ${Math.round(size / 1000)} von ~195 KB</p>
       <p class="small muted">Die Daten liegen in einem kostenlosen Online-Speicher (textdb.online) unter eurem geheimen Stall-Code und zusätzlich auf jedem Handy. Ab und zu exportieren schadet nicht.</p>
@@ -921,6 +1045,27 @@ function settingsSheet() {
     </div>
     <p class="small muted center">Stall-Code: <span class="code" style="display:inline">${esc(code)}</span></p>
     <button class="btn ghost block small" data-act="leave">Diesen Stall auf dem Handy abmelden</button>`);
+}
+
+function pushSettingsHTML() {
+  const pc = pushCfg();
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent), isAndroid = /Android/.test(navigator.userAgent);
+  if (!me) return `<div class="card"><h3>🔔 Benachrichtigungen</h3><p class="small muted">Wählt oben zuerst aus, wer dieses Handy nutzt.</p></div>`;
+  if (!pc) return `<div class="card"><h3>🔔 Benachrichtigungen</h3><p class="small muted">Push-Nachrichten bei neuen Sessions, Erfolgen und als Erinnerung an die Futterschale um 19:30. Läuft über die kostenlose App <b>ntfy</b> (iPhone und Android, ohne Konto).</p><button class="btn primary block" data-act="pushSetup">Benachrichtigungen einrichten</button></div>`;
+  const topic = pc.topics[me]; const pr = (pc.prefs && pc.prefs[me]) || {};
+  const store = isIOS ? `<a class="btn sm" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a>` : isAndroid ? `<a class="btn sm" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>` : `<a class="btn sm" href="https://apps.apple.com/app/ntfy/id1625396347" target="_blank" rel="noopener">App Store</a> <a class="btn sm" href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">Google Play</a>`;
+  return `<div class="card"><h3>🔔 Benachrichtigungen für ${WHO[me]}</h3>
+    <ol class="steps push">
+      <li><b>ntfy installieren</b> – kostenlos, ohne Konto.<div class="row wrap" style="margin-top:6px">${store}</div></li>
+      <li><b>Thema abonnieren.</b> ${isAndroid ? 'Ein Tipp genügt:' : 'In ntfy auf <b>＋</b> tippen, diesen Namen einfügen und „Abonnieren“ wählen (Server ntfy.sh bleibt so):'}
+        ${isAndroid ? `<div style="margin-top:6px"><a class="btn sm primary" href="ntfy://ntfy.sh/${esc(topic)}">In ntfy abonnieren</a></div>` : ''}
+        <div class="code" style="margin-top:6px">${esc(topic)}</div><button class="btn sm" style="margin-top:6px" data-act="copyTopic">Namen kopieren</button>
+        ${isIOS ? '<div class="small muted" style="margin-top:6px">Beim ersten Start „Mitteilungen erlauben“ bestätigen.</div>' : ''}</li>
+      <li><b>Testen:</b> <button class="btn sm" data-act="pushTest">Test-Nachricht senden</button></li>
+    </ol>
+    <div class="flabel" style="margin-top:10px">Was soll ${WHO[me]} bekommen?</div>
+    ${PUSHKINDS.map(([k, l]) => `<label class="toggle" style="margin:6px 0"><input type="checkbox" data-pp="${k}" ${pr[k] ? 'checked' : ''}> ${l}</label>`).join('')}
+    <p class="small muted">Das Thema ist wie ein Passwort: Nur wer den Namen kennt, bekommt die Nachrichten. Die eigenen Einträge lösen bei dir keine Session-Nachricht aus.</p></div>`;
 }
 
 // ---------- events ----------
@@ -957,13 +1102,17 @@ document.addEventListener('click', async e => {
     case 'fgd': { const i = +arg; F.goodday = F.goodday.includes(i) ? F.goodday.filter(x => x !== i) : [...F.goodday, i]; rerenderForm(); break; }
     case 'fmin': F.minutes = Math.max(1, Math.min(30, F.minutes + +arg)); rerenderForm(); break;
     case 'saveSession': saveSession(); break;
+    case 'pf': PF = arg; render(); break;
+    case 'pushSetup': ensurePush(); settingsSheet(); scheduleBowl(true); break;
+    case 'copyTopic': copy(pushCfg().topics[me]); break;
+    case 'pushTest': ntfySend(pushCfg().topics[me], { title: '🦙 Hallo ' + WHO[me] + '!', message: 'So sehen Stevies Nachrichten aus. Es klappt!', tags: 'white_check_mark' }); toast('Test gesendet – kommt gleich an.'); break;
     case 'hideInstall': lsSet('stevie.installHint', 'x'); render(); break;
-    case 'rest': { const d = today(); const on = !(S.rest[d] && S.rest[d].on); S.rest[d] = { on, who: me || '', updatedAt: Date.now() }; commit(on ? 'Ruhetag eingetragen. Auch das ist Training. 🌙' : 'Ruhetag entfernt'); break; }
+    case 'rest': { const d = today(); const on = !(S.rest[d] && S.rest[d].on); S.rest[d] = { on, who: me || '', updatedAt: Date.now() }; commit(on ? 'Ruhetag eingetragen. Auch das ist Training. 🌙' : 'Ruhetag entfernt'); if (on) scheduleIdle(); break; }
     case 'theme': lsSet('stevie.theme', arg); applyTheme(); settingsSheet(); break;
     case 'report': shareReport(); break;
     case 'badge': { const b = window.BADGES.find(x => x.id === arg); toast(b.icon + ' ' + b.name + ': ' + b.req); break; }
     case 'delSession': if (confirm('Diese Session löschen?')) { S.sessions[F.id] = Object.assign({}, S.sessions[F.id], { deleted: true, updatedAt: Date.now() }); closeSheet(); commit('Gelöscht'); } break;
-    case 'bowl': { const d = today(); const on = !(S.bowl[d] && S.bowl[d].done); S.bowl[d] = { done: on, who: me || 'J', updatedAt: Date.now() }; commit(on ? 'Futterschale ✓ – Stevie freut sich' : 'Zurückgenommen'); break; }
+    case 'bowl': { const d = today(); const on = !(S.bowl[d] && S.bowl[d].done); S.bowl[d] = { done: on, who: me || 'J', updatedAt: Date.now() }; commit(on ? 'Futterschale ✓ – Stevie freut sich' : 'Zurückgenommen'); scheduleBowl(true); break; }
     case 'level': tab = 'wissen'; lsSet('stevie.tab', tab); sub.wlevel = +arg; if (sheetOpen) closeSheet(); render(); window.scrollTo(0, 0); break;
     case 'wissen': tab = 'wissen'; lsSet('stevie.tab', tab); sub.wissen = arg; sub.wlevel = null; render(); window.scrollTo(0, 0); break;
     case 'wback': if (sub.wlevel !== null) sub.wlevel = null; else sub.wissen = null; render(); window.scrollTo(0, 0); break;
@@ -978,11 +1127,14 @@ document.addEventListener('click', async e => {
     case 'delNote': if (confirm('Eintrag löschen?')) { S.notes[N.id] = Object.assign({}, S.notes[N.id], { deleted: true, updatedAt: Date.now() }); closeSheet(); commit('Gelöscht'); } break;
     case 'w8dec': { const w = collectW8(); w.decision = arg; S.week8 = Object.assign({}, w, { updatedAt: Date.now() }); commit(); break; }
     case 'saveW8': { const w = collectW8(); S.week8 = Object.assign({}, w, { updatedAt: Date.now() }); commit('Woche-8-Check gespeichert ✓'); break; }
-    case 'startTimer': startTimerSheet(); break;
+    case 'startTimer': startTimerSheet(arg !== undefined ? +arg : undefined, el.dataset.leg); break;
     case 'pre': el.parentElement.classList.add('done'); el.style.opacity = '.55'; el.style.textDecoration = 'line-through'; break;
     case 'goTimer': runTimer(); break;
-    case 'stopTimer': { const s = Math.max(1, Math.round((Date.now() - timer.start) / 60000)); clearInterval(timer.iv); timer = null; F = defaultForm('stevie', Math.min(30, s)); F.fromTimer = true; $('#sheet').innerHTML = '<div class="grab"></div>' + sessionForm(); $('#sheet').scrollTop = 0; break; }
-    case 'saveSettings': S.settings = { startDate: $('#setStart').value || today(), stopWord: ($('#setStop').value || 'STOPP').trim().slice(0, 20), updatedAt: Date.now() }; closeSheet(); commit('Gespeichert ✓'); break;
+    case 'tsLevel': TS.level = +arg; if (TS.level >= 4 && !TS.legs.length) TS.legs = [recommended().legs[0] || 'VL']; renderStartSheet(); break;
+    case 'tsLeg': TS.legs = TS.legs.includes(arg) ? TS.legs.filter(x => x !== arg) : [...TS.legs, arg]; renderStartSheet(); break;
+    case 'moodInfo': { const m = moodOf(sessionsOf('stevie')); if (m) toast(m.detail + (m.hint ? ' – ' + m.hint : '')); break; }
+    case 'stopTimer': { const s = Math.max(1, Math.round((Date.now() - timer.start) / 60000)); clearInterval(timer.iv); try { timer.wake && timer.wake.release(); } catch { } timer = null; F = defaultForm('stevie', Math.min(30, s)); F.level = TS.level; F.legs = TS.legs.slice(); F.fromTimer = true; $('#sheet').innerHTML = '<div class="grab"></div>' + sessionForm(); $('#sheet').scrollTop = 0; break; }
+    case 'saveSettings': S.settings = { push: S.settings.push, startDate: $('#setStart').value || today(), stopWord: ($('#setStop').value || 'STOPP').trim().slice(0, 20), updatedAt: Date.now() }; closeSheet(); commit('Gespeichert ✓'); break;
     case 'share': { const url = shareLink(); if (navigator.share) { try { await navigator.share({ title: 'Stevies Training', text: 'Unser gemeinsames Trainingsprotokoll für Stevie 🦙', url }); } catch { } } else { copy(url); } break; }
     case 'copy': copy(shareLink()); break;
     case 'export': { const blob = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stevie-backup-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove(); break; }
@@ -997,6 +1149,12 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', async e => {
   if (e.target.dataset.fc && F) F[e.target.dataset.fc] = e.target.checked;
+  if (e.target.dataset.pp && me) {
+    const pc = JSON.parse(JSON.stringify(pushCfg()));
+    pc.prefs[me] = Object.assign({}, pc.prefs[me], { [e.target.dataset.pp]: e.target.checked });
+    S.settings = Object.assign({}, S.settings, { push: pc, updatedAt: Date.now() });
+    saveLocal(); dirty = true; sync(); scheduleBowl(true); toast('Gespeichert ✓');
+  }
   if (e.target.id === 'importFile') {
     const file = e.target.files[0]; if (!file) return;
     try { const d = JSON.parse(await file.text()); S = merge(S, d); closeSheet(); commit('Import zusammengeführt ✓'); } catch { toast('Datei konnte nicht gelesen werden.'); }

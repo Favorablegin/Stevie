@@ -358,3 +358,19 @@ body{background:var(--bg) radial-gradient(1200px 500px at 50% -200px,color-mix(i
 .hero .badge.again{color:#8a6d12} .hero .badge.up{color:#2f7a4c} .hero .badge.repeat{color:#b45a1f} .hero .badge.down{color:#a8322b} .hero .badge.start{color:#2f5d50}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .hero{background:linear-gradient(150deg,#2f5d50,#1b3a31)}}
 :root[data-theme="dark"] .hero{background:linear-gradient(150deg,#2f5d50,#1b3a31)}
+/* v3 */
+.moodline{background:var(--b2s);border-radius:14px;padding:10px 12px;font-size:14px;margin:8px 0}
+button.mood{cursor:pointer}
+.linkbtn{display:block;margin:10px auto 0;color:inherit;opacity:.85;font-weight:700;font-size:14px;text-decoration:underline;text-underline-offset:3px}
+.lvgrid .chip.rec{box-shadow:inset 0 -3px 0 var(--terra)}
+.roadmap{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:12px}
+.roadmap div{display:flex;flex-direction:column;align-items:center;text-align:center;gap:3px;font-size:10.5px;line-height:1.15;color:var(--muted)}
+.roadmap i{width:100%;height:8px;border-radius:9px;background:var(--card2)}
+.roadmap b{font-weight:700} .roadmap small{font-size:10px}
+.roadmap .past i{background:var(--accent-soft)} .roadmap .past{color:var(--accent)}
+.roadmap .now i{background:var(--terra)} .roadmap .now{color:var(--ink)} .roadmap .now b{color:var(--terra)}
+.wkline{display:flex;gap:2px;margin-top:10px}
+.wkline span{flex:1;height:16px;border-radius:4px;background:var(--card2);font-size:9px;display:grid;place-items:center;color:var(--muted);font-weight:700}
+.wkline span.past{background:var(--accent-soft);color:var(--accent)} .wkline span.now{background:var(--ink);color:var(--bg)}
+ol.steps.push{padding-left:20px} ol.steps.push li{margin:10px 0}
+a.btn{text-decoration:none}

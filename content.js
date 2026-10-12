@@ -339,3 +339,11 @@ window.BADGES = [
   { id: 'w8', icon: '🧭', name: 'Ehrlich entschieden', req: 'Woche-8-Check ausgefüllt' },
   { id: 'stupsi', icon: '🦙', name: 'Stupsi ist dabei', req: 'Die erste Session mit Stupsi' }
 ];
+
+// Stevies Kommentare zur letzten Session (nach Barometer)
+window.STEVIE_SAYS = [
+  ['Das war entspannt. Ich hab sogar kurz vergessen, dass ihr da seid.', 'Ihr habt aufgehört, als es schön war. Merk ich mir.', 'Ich hab wiedergekäut. Nur damit ihr’s wisst.', 'Berechenbar. Meine Lieblingseigenschaft. Gleich nach „hat Futter dabei“.'],
+  ['Ich hab aufgepasst. Ist mein Job. Aber war okay.', 'Kurz die Ohren gespitzt. Nichts passiert. Gut so.', 'Ich hab euch im Blick. Ihr mich ja auch.', 'Ein bisschen spannend. Aber nur ein bisschen.'],
+  ['Das war mir ein Stück zu viel. Morgen bitte kleiner?', 'Ich hab gesummt. Ihr habt’s gehört, oder?', 'Halb so tief, halb so lang, halb so nah. Nur so als Idee.', 'Wenn ihr leichter macht, mach ich wieder mit.'],
+  ['Das war nix. Aber ich bin euch nicht böse.', 'Ich brauch kurz Abstand. Die Treppe und ich.', 'Ein Level tiefer, dann klappt’s wieder. Versprochen.', 'Ein doofer Tag macht nicht alles kaputt.']
+];
