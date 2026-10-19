@@ -23,15 +23,22 @@ export default async function handler(req, res) {
         const n = await sendTo(code, doc, s => prefOf(data, s.who, 'bowl'), { title: '🥣 Futterschale für Stevie', body: 'Heute ist noch keine Gute-Nachricht-Mahlzeit eingetragen. Schon erledigt? Kurz in der App abhaken.', tag: 'bowl', url: '/?s=' + code });
         doc.sent.bowl = date; changed = true; out.push({ code: code.slice(0, 6), bowl: n });
       }
-      // 2) Drei Tage keine Session (und kein Ruhetag)
-      const ss = Object.values(data.sessions || {}).filter(s => !s.deleted && s.animal !== 'stupsi').map(s => s.date).sort();
-      const rests = Object.entries(data.rest || {}).filter(([, r]) => r.on).map(([d]) => d).sort();
-      const lastAct = [ss[ss.length - 1], rests[rests.length - 1]].filter(Boolean).sort().pop();
-      if (lastAct && mins >= 18 * 60 && mins < 22 * 60) {
-        const days = Math.round((Date.parse(date) - Date.parse(lastAct)) / 864e5);
-        if (days >= 3 && doc.sent.idle !== lastAct) {
-          const n = await sendTo(code, doc, s => prefOf(data, s.who, 'idle'), { title: '🦙 Stevie wartet', body: `Seit ${days} Tagen keine Session. Heute eine kurze, leichte Runde? Oder bewusst einen Ruhetag eintragen.`, tag: 'idle', url: '/?s=' + code });
-          doc.sent.idle = lastAct; changed = true; out.push({ code: code.slice(0, 6), idle: n });
+      // 2) Drei Tage keine Session – pro Tier (nur Tiere, die in den letzten 30 Tagen trainiert wurden)
+      if (mins >= 18 * 60 && mins < 22 * 60) {
+        const NAMES = { stevie: 'Stevie', stupsi: 'Stupsi', coco: 'Coco' };
+        const byAnimal = {};
+        for (const s of Object.values(data.sessions || {})) if (!s.deleted) (byAnimal[s.animal || 'stevie'] ||= []).push(s.date);
+        doc.sent.idleBy = doc.sent.idleBy || {};
+        for (const [animal, dates] of Object.entries(byAnimal)) {
+          const restDates = Object.entries(data.rest || {}).filter(([k, r]) => r.on && (animal === 'stevie' ? !k.includes(':') : k.startsWith(animal + ':'))).map(([k]) => k.split(':').pop());
+          const lastAct = [...dates, ...restDates].sort().pop();
+          if (!lastAct) continue;
+          const days = Math.round((Date.parse(date) - Date.parse(lastAct)) / 864e5);
+          if (days >= 3 && days <= 30 && doc.sent.idleBy[animal] !== lastAct) {
+            const name = NAMES[animal] || animal;
+            const n = await sendTo(code, doc, s => prefOf(data, s.who, 'idle'), { title: `🦙 ${name} wartet`, body: `Seit ${days} Tagen keine Session mit ${name}. Heute eine kurze, leichte Runde? Oder bewusst einen Ruhetag eintragen.`, tag: 'idle-' + animal, url: '/?s=' + code });
+            doc.sent.idleBy[animal] = lastAct; changed = true; out.push({ code: code.slice(0, 6), idle: animal, n });
+          }
         }
       }
       if (changed) await savePush(code, doc);

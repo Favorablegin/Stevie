@@ -5,8 +5,35 @@ const P = window.PLAN;
 const LEGS = ['VL', 'VR', 'HL', 'HR'];
 const LEGNAME = { VL: 'vorn links', VR: 'vorn rechts', HL: 'hinten links', HR: 'hinten rechts', gesamt: 'gesamt' };
 const WHO = { F: 'Fabi', J: 'Judith' };
-const ANIMAL = { stevie: 'Stevie', stupsi: 'Stupsi' };
-const MAPS = ['sessions', 'notes', 'minis', 'bowl', 'letters', 'rest'];
+const ALL_ANIMALS = ['stevie', 'stupsi', 'coco'];
+const ANIMAL = { stevie: 'Stevie', stupsi: 'Stupsi', coco: 'Coco' };
+let CA = (() => { try { return localStorage.getItem('stevie.animal') || 'stevie'; } catch { return 'stevie'; } })();
+const nm = a => ANIMAL[a] || a;
+const pers = (t, a = CA) => a && a !== 'stevie' ? String(t ?? '').replace(/Stevie/g, nm(a)) : String(t ?? '');
+function animalsOn() {
+  const set = new Set((S && S.settings && S.settings.animals) || ['stevie', 'stupsi']);
+  if (S) for (const x of Object.values(S.sessions)) if (!x.deleted && x.animal) set.add(x.animal);
+  return ALL_ANIMALS.filter(a => set.has(a));
+}
+const restKey = (a, d) => a === 'stevie' ? d : a + ':' + d;
+const restOn = (a, d) => { const r = S.rest[restKey(a, d)]; return !!(r && r.on); };
+const miniKey = (a, k) => a === 'stevie' ? k : a + ':' + k;
+const w8Of = a => a === 'stevie' ? (S.week8 || null) : ((S.checks || {})[a] || null);
+function startOf(a) {
+  const st = (S.settings.starts || {})[a]; if (st) return st;
+  if (a === 'stevie') return S.settings.startDate || today();
+  const ss = sessionsOf(a); return ss.length ? ss[0].date : today();
+}
+function allLetters() { return P.letters.map(l => Object.assign({ animal: 'stevie' }, l)).concat(window.EXTRA_LETTERS || []); }
+function animalBar(compact) {
+  const list = animalsOn(); if (list.length < 2) return '';
+  return `<div class="abar">${list.map(a => {
+    const ss = sessionsOf(a); const done = ss.some(x => x.date === today());
+    const ov = overview(a); const r = ov.legPhase ? ov.legs[ov.focus] : ov.main;
+    return `<button class="ab ${a === CA ? 'on' : ''}" data-act="ca" data-arg="${a}" style="--ac:${window.ANIMALS[a].color}"><i>${esc(nm(a)[0])}</i><span><b>${esc(nm(a))}</b>${compact ? '' : `<small>${done ? '✓ heute' : r && r.level !== null && r.level !== undefined ? 'Level ' + r.level : 'Start'}</small>`}</span></button>`;
+  }).join('')}</div>`;
+}
+const MAPS = ['sessions', 'notes', 'minis', 'bowl', 'letters', 'rest', 'checks'];
 const SEVNAME = ['gutes Zeichen', 'AUFMERKSAM', 'ACHTUNG', 'STOPP'];
 const sig = n => window.SIGMAP[n] || { n, sev: 1, group: '', d: '' };
 const haptic = (ms = 8) => { try { navigator.vibrate && navigator.vibrate(ms); } catch { } };
@@ -48,7 +75,7 @@ let sheetOpen = false, pendingRender = false;
 let timer = null;
 
 function emptyData() {
-  return { v: 1, sessions: {}, notes: {}, minis: {}, bowl: {}, letters: {}, rest: {}, week8: null, settings: { startDate: today(), stopWord: 'STOPP', updatedAt: 0 } };
+  return { v: 1, sessions: {}, notes: {}, minis: {}, bowl: {}, letters: {}, rest: {}, checks: {}, week8: null, settings: { startDate: today(), stopWord: 'STOPP', updatedAt: 0 } };
 }
 function loadLocal() {
   try { const t = lsGet('stevie.data.' + code); if (t) return normalize(JSON.parse(t)); } catch { }
@@ -251,7 +278,9 @@ function overview(animal) {
   const legPhase = (g && g.achieved[3] !== undefined) || LEGS.some(l => tr[l]);
   const res = { tr, legPhase, legs: {} };
   if (!legPhase) {
-    res.main = g ? recFor(g) : { kind: 'start', level: animal === 'stupsi' ? null : 1, label: 'Start', msg: animal === 'stupsi' ? 'Startpunkt: zwei Level unter dem, was Stupsi heute schon entspannt mitmacht.' : 'Level 0 läuft ab heute im Alltag mit. Die erste Session ist Level 1: Kommen und Gehen.' };
+    res.main = g ? recFor(g) : animal === 'stupsi' ? { kind: 'start', level: null, label: 'Start', msg: 'Startpunkt: zwei Level unter dem, was Stupsi heute schon entspannt mitmacht.' }
+      : animal === 'coco' ? { kind: 'start', level: 1, label: 'Start', msg: 'Bei Coco klein anfangen – nur, was sicher klappt, und nur, wenn es sich anbietet. Kushen heißt: Übung vorbei.' }
+      : { kind: 'start', level: 1, label: 'Start', msg: 'Level 0 läuft ab heute im Alltag mit. Die erste Session ist Level 1: Kommen und Gehen.' };
   } else {
     for (const l of LEGS) res.legs[l] = tr[l] ? recFor(tr[l]) : { kind: 'start', level: 4, label: 'Start', msg: 'Noch nicht begonnen: Start bei Level 4.' };
     // Vorschlag: Vorderbeine zuerst, das niedrigste Level
@@ -276,6 +305,7 @@ function lettersUnlocked() {
   if (LEGS.some(l => tr[l] && tr[l].achieved[5] !== undefined)) u.l3 = true;
   if (LEGS.some(l => tr[l] && tr[l].achieved[7] !== undefined)) u.l4 = true;
   if (LEGS.some(l => tr[l] && tr[l].achieved[9] !== undefined) || (S.letters.l5 && S.letters.l5.forced)) u.l5 = true;
+  for (const L of (window.EXTRA_LETTERS || [])) if (achievedAny(analyze(L.animal), L.unlockLevel)) u[L.id] = true;
   return u;
 }
 function achievementsSet(animal) {
@@ -283,8 +313,8 @@ function achievementsSet(animal) {
   for (const [leg, t] of Object.entries(tr)) for (const k of Object.keys(t.achieved)) out.add(leg + ':' + k);
   return out;
 }
-function planWeek() {
-  const sd = S.settings.startDate || today();
+function planWeek(a = CA) {
+  const sd = startOf(a);
   return Math.max(1, Math.floor(daysBetween(sd, today()) / 7) + 1);
 }
 const PHASES = [{ name: 'Ankommen', lv: [0, 1], w: [1, 2] }, { name: 'Erste Berührung', lv: [2, 3], w: [2, 4] }, { name: 'Abwärts', lv: [4, 5], w: [4, 6] }, { name: 'Fuß hoch', lv: [6, 7], w: [6, 8] }, { name: 'Probe & Schnitt', lv: [8, 9], w: [9, 12] }];
@@ -327,16 +357,16 @@ function viewOnboarding() {
   </div>`;
 }
 
-function weekStrip() {
+function weekStrip(a = CA) {
   const ws = weekStart(today());
   const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
-  const ss = sessionsOf('stevie');
+  const ss = sessionsOf(a);
   let html = '<div class="week">';
   for (let i = 0; i < 7; i++) {
     const d = addDays(ws, i);
     const s = ss.filter(x => x.date === d);
     const top = s.length ? Math.max(...s.map(x => x.baro)) : null;
-    const rs = S.rest[d] && S.rest[d].on;
+    const rs = restOn(a, d);
     html += `<div class="${d === today() ? 'today' : ''}"><span class="${top !== null ? 'bg' + top : rs ? 'rest' : ''}">${s.length ? (s.length > 1 ? s.length + '×' : '✓') : rs ? '🌙' : ''}</span>${days[i]}</div>`;
   }
   return html + '</div>';
@@ -357,9 +387,11 @@ function moodOf(ss) {
   return m;
 }
 function viewHeute() {
-  const ov = overview('stevie');
-  const w = planWeek(); const rm = roadmapFor(w);
-  const ss = sessionsOf('stevie');
+  if (!animalsOn().includes(CA)) CA = 'stevie';
+  const A = nm(CA);
+  const ov = overview(CA);
+  const w = planWeek(CA); const rm = roadmapFor(w);
+  const ss = sessionsOf(CA);
   const thisWeek = ss.filter(s => weekStart(s.date) === weekStart(today())).length;
   const doneToday = ss.some(s => s.date === today());
   const last = ss[ss.length - 1];
@@ -367,13 +399,13 @@ function viewHeute() {
   void 0;
   if (!ov.legPhase) {
     const r = ov.main; const L = r.level !== null ? lv(r.level) : null;
-    hero = `<div class="card hero">${ALP}
-      <div class="eyebrow">${doneToday ? 'Heute erledigt ✓ · nächstes Mal' : 'Nächste Session'}</div>
+    hero = `<div class="card hero" style="--hc:${(window.ANIMALS[CA] || {}).color}">${ALP}
+      <div class="eyebrow">${A} · ${doneToday ? 'heute erledigt ✓ · nächstes Mal' : 'nächste Session'}</div>
       <div class="lvno">Level ${L ? L.n : '–'}</div>
       <h2>${L ? esc(L.name) : 'Start festlegen'}</h2>
       <span class="badge ${r.kind}">${esc(r.label)}</span>
       <p>${esc(r.msg)}</p>
-      ${L ? `<p class="small"><b>Ziel:</b> ${esc(L.goal)}</p>` : ''}
+      ${L ? `<p class="small"><b>Ziel:</b> ${esc(pers(L.goal))}</p>` : ''}
       ${r.stuck ? `<p class="small">💡 Seit über einer Woche auf diesem Level: nächsten Schritt halbieren – halb so tief, halb so lang, halb so nah.</p>` : ''}
       <div class="btns">${L ? `<button class="btn light" data-act="level" data-arg="${L.n}">Anleitung</button>` : ''}<button class="btn light" data-act="startTimer">Session starten</button></div>
       ${r.kind === 'repeat' && L && L.n > 0 ? `<button class="btn ghost block" style="margin-top:8px;color:inherit;border-color:rgba(255,255,255,.35)" data-act="startTimer" data-arg="${L.n - 1}">Heute lieber Level ${L.n - 1} starten</button>` : ''}
@@ -381,8 +413,8 @@ function viewHeute() {
     </div>`;
   } else {
     const fr = ov.legs[ov.focus]; const L = lv(fr.level);
-    hero = `<div class="card hero">${ALP}
-      <div class="eyebrow">Vorschlag für heute · ${LEGNAME[ov.focus]}</div>
+    hero = `<div class="card hero" style="--hc:${(window.ANIMALS[CA] || {}).color}">${ALP}
+      <div class="eyebrow">${A} · Vorschlag für heute · ${LEGNAME[ov.focus]}</div>
       <div class="lvno">Level ${L.n}</div>
       <h2>${esc(L.name)}</h2>
       <span class="badge ${fr.kind}">${esc(fr.label)}</span>
@@ -400,22 +432,18 @@ function viewHeute() {
   for (let i = 0; i < 400; i++) { const d = addDays(today(), -i); if (S.bowl[d] && S.bowl[d].done) streak++; else if (i > 0) break; }
   const wk = Math.min(12, w);
   let tl = ''; for (let i = 1; i <= 12; i++) tl += `<span class="${i < wk ? 'past' : i === wk ? 'now' : ''}">${i}</span>`;
-  const week8Due = w >= 8 && !S.week8;
+  const week8Due = w >= 8 && !w8Of(CA);
   const wl = workingLevel(ov); const phIdx = Math.max(0, phaseOfLevel(wl));
   const exp = PHASES.findIndex(p => w >= p.w[0] && w <= p.w[1]); const expIdx = exp < 0 ? PHASES.length - 1 : exp;
-  const paceText = `Ihr arbeitet an <b>Level ${wl}</b>${ov.legPhase ? ' (Vorderbeine)' : ''}. Laut Kalender (Woche ${Math.min(w, 12)}) wäre <b>${esc(PHASES[expIdx].name)}</b> dran – ` + (phIdx > expIdx ? 'ihr seid schneller als der Richtwert. Völlig okay, solange Stevie meistens bei 0 oder 1 bleibt.' : phIdx < expIdx ? 'ihr seid etwas langsamer als der Richtwert. Kein Rückstand, sondern ein Fundament.' : 'ihr liegt genau im Plan.') + ' <span class="muted">Das Tempo bestimmt Stevie.</span>';
-  const stupsiOn = sessionsOf('stupsi').length || achievedAny(analyze('stevie'), 6);
-  let stupsi = '';
-  if (stupsiOn) {
-    const so = overview('stupsi');
-    const r = so.legPhase ? so.legs[so.focus] : so.main;
-    stupsi = `<div class="card"><div class="row between"><div><div class="eyebrow">Bonus · Stupsis Runde</div><h3>${r.level !== null ? 'Level ' + r.level + ' · ' + esc(lv(r.level).name) : 'Startpunkt festlegen'}</h3></div><span class="badge ${r.kind}">${esc(r.label)}</span></div><p class="small muted">${esc(r.msg)}</p><button class="btn sm" data-act="newSession" data-arg="stupsi">Stupsi-Session eintragen</button></div>`;
-  }
+  const paceText = `Ihr arbeitet an <b>Level ${wl}</b>${ov.legPhase ? ' (Vorderbeine)' : ''}. Laut Kalender (Woche ${Math.min(w, 12)}) wäre <b>${esc(PHASES[expIdx].name)}</b> dran – ` + (phIdx > expIdx ? 'ihr seid schneller als der Richtwert. Völlig okay, solange ' + A + ' meistens bei 0 oder 1 bleibt.' : phIdx < expIdx ? 'ihr seid etwas langsamer als der Richtwert. Kein Rückstand, sondern ein Fundament.' : 'ihr liegt genau im Plan.') + ' <span class="muted">Das Tempo bestimmt ' + A + '.</span>';
+  const meta = window.ANIMALS[CA] || {};
+  const animalNote = meta.note ? `<div class="callout" style="border-left:4px solid ${meta.color}"><b>${esc(meta.note[0])}</b><br>${esc(meta.note[1])}</div>` : '';
+  const says = CA === 'stevie' ? window.STEVIE_SAYS : (window.ANIMAL_SAYS[CA] || window.STEVIE_SAYS);
   const tips = window.TIPS; const tip = tips[(daysBetween('2026-01-01', today()) % tips.length + tips.length) % tips.length];
   const curLv = ov.legPhase ? 4 : (ov.main.level ?? 0);
   const jPhase = w >= 9 ? 3 : curLv >= 4 ? 2 : curLv >= 2 ? 1 : 0;
   const jNames = [['Gute-Nachricht-Person', 'Bringt täglich die Futterschale. Fasst Stevie nicht an.'], ['Beobachterin', 'Schaut bei Sessions zu, benennt Signale, darf jederzeit „leichter“ oder das Stop-Wort sagen.'], ['Co-Trainerin', 'Eigene Mini-Sessions in Levels, die Stevie bei Fabi schon sicher kann – immer eine Stufe darunter.'], ['Trainerin', 'Eigene Sessions bis Level 6 oder 7. Ziel: zwei Vertrauenspersonen.']];
-  const restToday = S.rest[today()] && S.rest[today()].on;
+  const restToday = restOn(CA, today());
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const install = !standalone && lsGet('stevie.installHint') !== 'x';
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -424,38 +452,39 @@ function viewHeute() {
     ${install ? `<div class="install"><span class="ic">📲</span><div class="grow"><b>Als App installieren</b><br><span class="small">${isIOS ? 'In Safari unten auf <b>Teilen</b> tippen, dann <b>„Zum Home-Bildschirm“</b>.' : 'Im Browser-Menü <b>⋮</b> auf <b>„App installieren“</b> bzw. „Zum Startbildschirm hinzufügen“ tippen.'}</span></div><button class="x" data-act="hideInstall" aria-label="Ausblenden">✕</button></div>` : ''}
     <div class="greet"><div><div class="eyebrow">${new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })}</div><h1>${greeting()}${me ? ', ' + WHO[me] : ''}</h1></div>${mood ? `<button class="mood" data-act="moodInfo"><span>${mood.icon}</span><small>${mood.text}</small></button>` : ''}</div>
     ${mood && mood.hint ? `<div class="moodline"><b>${mood.icon} ${esc(mood.detail)}.</b> ${esc(mood.hint)}</div>` : ''}
-    ${last ? `<div class="stevie-says"><b>Stevie zur letzten Session</b>${esc(window.STEVIE_SAYS[last.baro][(daysBetween('2026-01-01', last.date) + last.minutes) % window.STEVIE_SAYS[last.baro].length])}</div>` : ''}
+    ${animalBar()}
+    ${last ? `<div class="stevie-says" style="--sc:${meta.color}"><b>${A} zur letzten Session</b>${esc(says[last.baro][(daysBetween('2026-01-01', last.date) + last.minutes) % says[last.baro].length])}</div>` : ''}
     ${hero}
-    <button class="btn primary block" data-act="newSession" style="min-height:54px;font-size:17px">＋ Session eintragen</button>
+    ${animalNote}
+    <button class="btn primary block" data-act="newSession" style="min-height:54px;font-size:17px">＋ Session mit ${A} eintragen</button>
     <div class="tip"><span>💡</span><div><div class="eyebrow">Tipp des Tages</div>${esc(tip)}</div></div>
-    ${doneToday ? `<p class="small muted center">Heute gab es schon eine Session. Höchstens eine pro Tag – morgen geht’s weiter.</p>` : ''}
+    ${doneToday ? `<p class="small muted center">${A} hatte heute schon eine Session. Höchstens eine pro Tag und Tier – morgen geht’s weiter.</p>` : ''}
     <div class="card">
-      <div class="row between"><h3>Diese Woche</h3><span class="badge">${thisWeek} von 4–5</span></div>
-      ${weekStrip()}
-      <button class="restbtn ${restToday ? 'on' : ''}" data-act="rest">${restToday ? '🌙 Heute ist Ruhetag' : '🌙 Heute bewusst Ruhetag'}</button>
+      <div class="row between"><h3>${A} diese Woche</h3><span class="badge">${thisWeek} von 4–5</span></div>
+      ${weekStrip(CA)}
+      <button class="restbtn ${restToday ? 'on' : ''}" data-act="rest">${restToday ? '🌙 Heute Ruhetag für ' + A : '🌙 Heute bewusst Ruhetag für ' + A}</button>
       <p class="small muted" style="margin:8px 0 0">${thisWeek >= 5 ? 'Wochenziel erreicht. Ruhetage sind auch Training.' : thisWeek >= 4 ? 'Wochenziel erreicht. Eine mehr geht, muss aber nicht.' : last ? 'Letzte Session: ' + fmtLong(last.date) + (daysBetween(last.date, today()) >= 3 ? ' – Zeit für eine kurze, leichte Runde.' : '') : 'Noch keine Session eingetragen.'}</p>
     </div>
     <div class="card">
       <div class="bowl">
         <button class="bowl-btn ${bowlToday ? 'on' : ''}" data-act="bowl" aria-label="Futterschale heute">${bowlToday ? '✓' : '🥣'}</button>
-        <div class="grow"><h3 style="margin:0">Judiths Futterschale</h3><div class="small muted">${bowlToday ? 'Heute erledigt' + (S.bowl[today()].who ? ' von ' + WHO[S.bowl[today()].who] : '') + '. ' : 'Heute noch offen. '}${streak > 1 ? streak + ' Tage am Stück.' : ''}</div><div class="dots">${bowlDots}</div></div>
+        <div class="grow"><h3 style="margin:0">Judiths Futterschale</h3><div class="small muted">für die ganze Herde · drei Schalen mit Abstand</div><div class="small muted">${bowlToday ? 'Heute erledigt' + (S.bowl[today()].who ? ' von ' + WHO[S.bowl[today()].who] : '') + '. ' : 'Heute noch offen. '}${streak > 1 ? streak + ' Tage am Stück.' : ''}</div><div class="dots">${bowlDots}</div></div>
       </div>
     </div>
-    <div class="card">
+    ${CA !== 'stevie' ? '' : `<div class="card">
       <div class="row between"><div><div class="eyebrow">Judiths Weg</div><h3 style="margin:2px 0 0">${jNames[jPhase][0]}</h3></div><span class="badge">Phase ${jPhase + 1} von 4</span></div>
       <div class="phases">${jNames.map((_, i) => `<i class="${i < jPhase ? 'past' : i === jPhase ? 'now' : ''}"></i>`).join('')}</div>
       <p class="small muted" style="margin:6px 0 0">${esc(jNames[jPhase][1])}</p>
-    </div>
-    ${stupsi}
+    </div>`}
     <div class="card">
-      <div class="row between"><div><div class="eyebrow">Fahrplan · Kalenderwoche ${w > 12 ? '12+' : w} von 12</div><h3 style="margin:2px 0 0">Phase: ${esc(PHASES[phIdx].name)}</h3></div><button class="btn sm ghost" data-act="wissen" data-arg="fahrplan">Details</button></div>
+      <div class="row between"><div><div class="eyebrow">Fahrplan ${A} · Woche ${w > 12 ? '12+' : w} von 12</div><h3 style="margin:2px 0 0">Phase: ${esc(PHASES[phIdx].name)}</h3></div><button class="btn sm ghost" data-act="wissen" data-arg="fahrplan">Details</button></div>
       <div class="roadmap">${PHASES.map((p, i) => `<div class="${i < phIdx ? 'past' : i === phIdx ? 'now' : ''}"><i></i><b>${esc(p.name)}</b><small>L ${p.lv[0]}–${p.lv[1]}</small></div>`).join('')}</div>
       <div class="wkline">${tl}</div>
       <p class="small" style="margin:10px 0 0">${paceText}</p>
       ${week8Due ? `<button class="btn terra block" style="margin-top:12px" data-act="tab" data-arg="protokoll" data-sub="woche8">Woche-8-Check ausfüllen</button>` : ''}
     </div>
     <div class="stopword"><span>Stop-Wort</span><b>${esc(S.settings.stopWord || 'STOPP')}</b><span class="small" style="font-weight:600">Hände sofort weg.</span></div>
-    <div class="golden">Wir hören so früh auf, dass Stevie nicht lernen muss, uns mit stärkerem Verhalten zum Aufhören zu bringen.</div>
+    <div class="golden">Wir hören so früh auf, dass ${A} nicht lernen muss, uns mit stärkerem Verhalten zum Aufhören zu bringen.</div>
   `;
 }
 
@@ -466,26 +495,26 @@ function viewProtokoll() {
   if (sub.protokoll === 'karte') body = levelkarte();
   else if (sub.protokoll === 'woche8') body = week8View();
   else body = sessionList();
-  return `<h1 class="pagetitle">Protokoll</h1><div class="seg">${segs.map(([k, l]) => `<button class="${sub.protokoll === k ? 'on' : ''}" data-act="sub" data-arg="${k}">${l}</button>`).join('')}</div>${body}`;
+  return `<h1 class="pagetitle">Protokoll</h1>${animalBar(true)}<div class="seg">${segs.map(([k, l]) => `<button class="${sub.protokoll === k ? 'on' : ''}" data-act="sub" data-arg="${k}">${l}</button>`).join('')}</div>${body}`;
 }
 function sessionLine(s) {
   const L = lv(s.level);
   const legs = s.level >= 4 && s.legs && s.legs.length ? ' · ' + s.legs.join(' ') : '';
   return `<button class="entry" style="width:100%;text-align:left" data-act="editSession" data-arg="${s.id}">
     <div class="bdot bg${s.baro}">${s.baro}</div>
-    <div class="grow"><div class="t">${s.animal === 'stupsi' ? 'Stupsi · ' : ''}Level ${s.level} · ${esc(L.name)}${legs}</div>
+    <div class="grow"><div class="t">${animalsOn().length > 1 ? `<span class="atag" style="--ac:${(window.ANIMALS[s.animal] || {}).color}">${esc(nm(s.animal))}</span> ` : ''}Level ${s.level} · ${esc(L.name)}${legs}</div>
     <div class="meta">${fmtLong(s.date)}${s.time ? ' · ' + s.time : ''} · ${WHO[s.who] || '?'} · ${s.minutes} Min.</div>
     ${s.good ? `<p>👍 ${esc(s.good)}</p>` : ''}${s.next ? `<p class="muted">→ ${esc(s.next)}</p>` : ''}
     ${s.signals && s.signals.length ? `<div class="chipline">${s.signals.map(x => `<span class="s${sig(x).sev}">${esc(x)}</span>`).join('')}</div>` : ''}${(s.goodday || []).length ? `<div class="meta">✓ ${s.goodday.length} von 4 „guter Tag“</div>` : ''}</div></button>`;
 }
-let PF = 'alle';
+let PF = 'alle', PA = 'ca';
 function sessionList() {
-  const flt = { alle: () => true, F: s => s.who === 'F', J: s => s.who === 'J', stupsi: s => s.animal === 'stupsi', unruhig: s => s.baro >= 2 };
-  const all = sessionsOf();
+  const flt = { alle: () => true, F: s => s.who === 'F', J: s => s.who === 'J', unruhig: s => s.baro >= 2 };
+  const all = PA === 'all' ? sessionsOf() : sessionsOf(CA);
   const ss = all.filter(flt[PF] || flt.alle).reverse();
-  const fbar = all.length ? `<div class="chips" style="margin:6px 0 2px">${[['alle', 'Alle'], ['F', 'Fabi'], ['J', 'Judith'], ['unruhig', 'ACHTUNG/STOPP'], ...(all.some(s => s.animal === 'stupsi') ? [['stupsi', 'Stupsi']] : [])].map(([k, l]) => `<button class="chip ${PF === k ? 'on' : ''}" style="min-height:34px;font-size:13px" data-act="pf" data-arg="${k}">${l}</button>`).join('')}</div>` : '';
+  const fbar = all.length ? `<div class="chips" style="margin:6px 0 2px">${[['alle', 'Alle'], ['F', 'Fabi'], ['J', 'Judith'], ['unruhig', 'ACHTUNG/STOPP']].map(([k, l]) => `<button class="chip ${PF === k ? 'on' : ''}" style="min-height:34px;font-size:13px" data-act="pf" data-arg="${k}">${l}</button>`).join('')}${animalsOn().length > 1 ? `<button class="chip ${PA === 'all' ? 'on' : ''}" style="min-height:34px;font-size:13px" data-act="pa">Alle Tiere</button>` : ''}</div>` : '';
   if (all.length && !ss.length) return fbar + `<div class="card empty">Keine Sessions für diesen Filter.</div>`;
-  if (!ss.length) return `<div class="card empty"><svg viewBox="0 0 64 64"><use href="#alpaca"/></svg>Noch keine Session. Eine Zeile pro Session, Stichworte reichen.<div class="btns"><button class="btn primary" data-act="newSession">Erste Session eintragen</button></div></div>`;
+  if (!ss.length) return `<div class="card empty"><svg viewBox="0 0 64 64"><use href="#alpaca"/></svg>Noch keine Session mit ${esc(nm(CA))}. Eine Zeile pro Session, Stichworte reichen.<div class="btns"><button class="btn primary" data-act="newSession">Erste Session eintragen</button></div></div>`;
   let html = '', curW = '';
   for (const s of ss) {
     const w = weekStart(s.date);
@@ -495,7 +524,7 @@ function sessionList() {
   return fbar + html + '</div><p class="small muted center">Tippen zum Bearbeiten oder Löschen.</p>';
 }
 function levelkarte() {
-  const tr = analyze('stevie');
+  const tr = analyze(CA);
   const cell = (leg, n) => {
     const t = tr[leg];
     if (t && t.achieved[n] !== undefined) { const [a, b] = t.achieved[n]; return `<span class="cell done">${fmtShort(a)}<br>${fmtShort(b)}</span>`; }
@@ -507,27 +536,26 @@ function levelkarte() {
     if (L.n < 4) rows += `<tr><td class="lvn">${L.n}</td><td style="text-align:left">${esc(L.name)}</td><td colspan="4">${cell('gesamt', L.n)} <span class="small muted">gesamt</span></td></tr>`;
     else rows += `<tr><td class="lvn">${L.n}</td><td style="text-align:left">${esc(L.name)}</td>${LEGS.map(l => `<td>${cell(l, L.n)}</td>`).join('')}</tr>`;
   }
-  const trS = analyze('stupsi'); const ms = maxAchieved(trS);
   return `<div class="card" style="padding:12px">
+    <h3>Levelkarte ${esc(nm(CA))}</h3>
     <p class="small muted" style="margin:0 0 6px">Geschafft nach 2 guten Sessions in Folge – die App trägt beide Daten automatisch ein. Ab Level 4 pro Bein.</p>
     <table class="lk"><tr><th>LV</th><th style="text-align:left">Name</th><th>VL</th><th>VR</th><th>HL</th><th>HR</th></tr>${rows}</table></div>
-    <div class="card"><h3>Stupsis Runde</h3><div class="row wrap" style="gap:6px">${P.levels.map(L => `<span class="lvbubble ${L.n <= ms && Object.values(trS).some(t => t.achieved[L.n] !== undefined) ? 'done' : ''}">${L.n}</span>`).join('')}</div>
-    <p class="small muted">${sessionsOf('stupsi').length ? 'Höchstes geschafftes Level: ' + (ms >= 0 ? ms : '–') : 'Startet, wenn Stevie Level 6 erreicht hat.'}</p></div>`;
+    ${animalsOn().length > 1 ? `<div class="card"><h3>Herde im Vergleich</h3>${animalsOn().map(a => { const t = analyze(a); const m = maxAchieved(t); return `<div class="row" style="margin:8px 0"><span class="atag" style="--ac:${window.ANIMALS[a].color};min-width:64px;text-align:center">${esc(nm(a))}</span><div class="row wrap grow" style="gap:4px">${P.levels.map(L => `<span class="lvbubble sm ${achievedAny(t, L.n) ? 'done' : ''}">${L.n}</span>`).join('')}</div></div>`; }).join('')}<p class="small muted" style="margin:4px 0 0">Kein Wettbewerb – jeder hat sein Tempo.</p></div>` : ''}`;
 }
 function currentLegLevels() {
-  const ov = overview('stevie');
+  const ov = overview(CA);
   if (!ov.legPhase) return { front: '', hind: '' };
   const g = l => { const t = ov.tr[l]; return t ? (Object.keys(t.achieved).length ? Math.max(...Object.keys(t.achieved).map(Number)) : t.last.level) : '–'; };
   return { front: g('VL') + ' / ' + g('VR'), hind: g('HL') + ' / ' + g('HR') };
 }
 function week8View() {
-  const w = S.week8 || {};
+  const w = w8Of(CA) || {};
   const cl = currentLegLevels();
   const f = (k, label, ph) => `<div class="field"><label>${label}</label><textarea data-w8="${k}" placeholder="${ph || ''}">${esc(w[k] || '')}</textarea></div>`;
   const dec = [['A', 'Plan läuft weiter wie geplant.', 'Vorderbeine bei Level 6 oder weiter. Die Vorderfüße bis Woche 12 sind realistisch. Hinterbeine weiter im eigenen Tempo.'], ['B', 'Weiter trainieren, Nagelpflege mit Hilfe für Woche 12 planen.', 'Vorderbeine bei Level 4 oder 5. Pflege mit erfahrener Hilfe für alle Füße, die dann noch nicht bei Level 9 sind.'], ['C', 'Erfahrene Alpaka-Person für eine Trainingsbegleitung dazuholen.', 'Kaum Fortschritt oder häufig STOPP. Pflege mit Hilfe planen. Kein Scheitern: eine Kurskorrektur.']];
   return `<div class="card">
     <div class="eyebrow">Ehrlich hinschauen, gemeinsam entscheiden</div>
-    <h3>Woche-8-Check</h3>
+    <h3>Woche-8-Check · ${esc(nm(CA))}</h3>
     <p class="small muted">In Woche 8 schaut ihr gemeinsam auf die Levelkarte und entscheidet nach einer von drei Linien. Das schützt das Training vor Zeitdruck in Woche 11.</p>
     <div class="field"><label>Datum</label><input type="date" data-w8="date" value="${esc(w.date || today())}"></div>
     <div class="row"><div class="field grow"><label>Level vorn L / R</label><input type="text" data-w8="front" value="${esc(w.front ?? cl.front)}"></div><div class="field grow"><label>Level hinten L / R</label><input type="text" data-w8="hind" value="${esc(w.hind ?? cl.hind)}"></div></div>
@@ -545,11 +573,10 @@ function week8View() {
 
 // ----- Muster
 function viewMuster() {
-  const animal = sub.muster;
+  const animal = CA;
   const ss = sessionsOf(animal);
-  const hasStupsi = sessionsOf('stupsi').length > 0;
-  const seg = hasStupsi ? `<div class="seg"><button class="${animal === 'stevie' ? 'on' : ''}" data-act="musterAnimal" data-arg="stevie">Stevie</button><button class="${animal === 'stupsi' ? 'on' : ''}" data-act="musterAnimal" data-arg="stupsi">Stupsi</button></div>` : '';
-  if (ss.length === 0) return seg + `<div class="card empty"><svg viewBox="0 0 64 64"><use href="#alpaca"/></svg>Hier erscheinen Verläufe und Muster, sobald ihr Sessions eintragt.</div>`;
+  const seg = animalBar(true);
+  if (ss.length === 0) return seg + `<div class="card empty"><svg viewBox="0 0 64 64"><use href="#alpaca"/></svg>Hier erscheinen Verläufe und Muster, sobald ihr Sessions mit ${esc(nm(animal))} eintragt.</div>`;
   const last10 = ss.slice(-10);
   const calm = ss.filter(s => s.baro <= 1).length / ss.length;
   const tr = analyze(animal);
@@ -595,27 +622,31 @@ function earlyWarn(ss) {
   const pos = Object.values(st).filter(t => sig(t.n).sev === 0).sort((a, b) => b.c - a.c).slice(0, 3);
   const posShare = avg(withSig.map(s => { const a = s.signals.length; return a ? s.signals.filter(n => sig(n).sev === 0).length / a : 0; }));
   if (!rows.length && !pos.length) return '';
-  return `<div class="card"><h3>Frühwarnzeichen</h3><p class="small muted" style="margin:0 0 8px">Wenn Stevie dieses Signal zeigt, endet die Session so oft mit ACHTUNG oder STOPP. Je höher, desto früher solltet ihr leichter werden.</p>
+  return `<div class="card"><h3>Frühwarnzeichen</h3><p class="small muted" style="margin:0 0 8px">Wenn ${esc(nm(CA))} dieses Signal zeigt, endet die Session so oft mit ACHTUNG oder STOPP. Je höher, desto früher solltet ihr leichter werden.</p>
     <div class="bars">${rows.map(t => `<div><span>${esc(t.n)}</span><em style="width:${Math.max(4, Math.round(t.p * 100))}%;background:${t.p >= .6 ? 'var(--b3)' : t.p >= .3 ? 'var(--b2)' : 'var(--b1)'}"></em><b>${Math.round(t.p * 100)}%</b></div>`).join('')}</div>
     ${pos.length ? `<p class="small" style="margin:10px 0 0">🌿 Gute Zeichen am häufigsten: ${pos.map(t => `<b>${esc(t.n)}</b> (${t.c}×)`).join(', ')} · Anteil guter Zeichen an allen Signalen: <b>${Math.round(posShare * 100)}%</b></p>` : ''}</div>`;
 }
 function shareReport() {
-  const ss = sessionsOf('stevie'); const ws = weekStart(today());
-  const wk = ss.filter(s => weekStart(s.date) === ws);
-  const ov = overview('stevie');
-  const now = ov.legPhase ? LEGS.map(l => `${l} ${ov.legs[l].level}`).join(' · ') : `Level ${ov.main.level ?? '–'} (${lv(ov.main.level ?? 0).name})`;
+  const ws = weekStart(today());
   const bowl = Array.from({ length: 7 }, (_, i) => addDays(ws, i)).filter(d => S.bowl[d] && S.bowl[d].done).length;
-  const sigC = {}; wk.forEach(s => (s.signals || []).forEach(n => sigC[n] = (sigC[n] || 0) + 1));
-  const topSig = Object.entries(sigC).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, c]) => `${n} (${c}×)`).join(', ');
-  const goods = wk.filter(s => s.good).map(s => '• ' + s.good).slice(0, 4).join('\n');
-  const txt = `🦙 Stevie · Woche ab ${fmtShort(ws)}\n\nSessions: ${wk.length} von 4–5\nØ Barometer: ${wk.length ? f1(avg(wk.map(s => s.baro))) : '–'} (${wk.filter(s => s.baro <= 1).length}× ruhig, ${wk.filter(s => s.baro === 2).length}× ACHTUNG, ${wk.filter(s => s.baro === 3).length}× STOPP)\nAktuell: ${now}\nFutterschale: ${bowl}/7 Tage${topSig ? '\nSignale: ' + topSig : ''}${goods ? '\n\nWas gut lief:\n' + goods : ''}`;
-  if (navigator.share) navigator.share({ title: 'Stevie Wochenbericht', text: txt }).catch(() => { }); else copy(txt);
+  const parts = animalsOn().map(a => {
+    const wk = sessionsOf(a).filter(s => weekStart(s.date) === ws);
+    const ov = overview(a);
+    const now = ov.legPhase ? LEGS.map(l => `${l} ${ov.legs[l].level}`).join(' · ') : `Level ${ov.main.level ?? '–'}`;
+    const sigC = {}; wk.forEach(s => (s.signals || []).forEach(n => sigC[n] = (sigC[n] || 0) + 1));
+    const topSig = Object.entries(sigC).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n, c]) => `${n} (${c}×)`).join(', ');
+    const goods = wk.filter(s => s.good).map(s => '  • ' + s.good).slice(0, 3).join('\n');
+    if (!wk.length) return `${nm(a)}: diese Woche keine Session · aktuell ${now}`;
+    return `${nm(a)}: ${wk.length} Sessions · Ø Barometer ${f1(avg(wk.map(s => s.baro)))} (${wk.filter(s => s.baro <= 1).length}× ruhig, ${wk.filter(s => s.baro === 2).length}× ACHTUNG, ${wk.filter(s => s.baro === 3).length}× STOPP)\n  aktuell ${now}${topSig ? '\n  Signale: ' + topSig : ''}${goods ? '\n' + goods : ''}`;
+  });
+  const txt = `🦙 Herde · Woche ab ${fmtShort(ws)}\n\n${parts.join('\n\n')}\n\nFutterschale: ${bowl}/7 Tage`;
+  if (navigator.share) navigator.share({ title: 'Wochenbericht', text: txt }).catch(() => { }); else copy(txt);
 }
 function signalCard(ss) {
   const c = {};
   for (const s of ss) for (const x of s.signals || []) c[x] = (c[x] || 0) + 1;
   const e = Object.entries(c).sort((a, b) => b[1] - a[1]);
-  if (!e.length) return `<div class="card"><h3>Signale</h3><p class="small muted">Beim Eintragen könnt ihr unter „Mehr“ die gesehenen Signale antippen. Dann zeigt sich hier, was Stevie am häufigsten zeigt.</p></div>`;
+  if (!e.length) return `<div class="card"><h3>Signale</h3><p class="small muted">Beim Eintragen könnt ihr unter „Mehr“ die gesehenen Signale antippen. Dann zeigt sich hier, was ${esc(nm(CA))} am häufigsten zeigt.</p></div>`;
   const m = e[0][1];
   return `<div class="card"><h3>Häufigste Signale</h3><div class="bars">${e.slice(0, 8).map(([k, n]) => `<div><span>${esc(k)}</span><em style="background:${['var(--b0)', 'var(--b1)', 'var(--b2)', 'var(--b3)'][sig(k).sev]};width:${Math.round(n / m * 100)}%"></em><b>${n}</b></div>`).join('')}</div></div>`;
 }
@@ -717,26 +748,26 @@ function weekChart(ss) {
 // ----- Erfolge
 function viewErfolge() {
   const un = lettersUnlocked();
-  const letters = P.letters.map(L => {
+  const letters = allLetters().filter(L => L.animal === CA).map(L => {
     const open = un[L.id]; const read = S.letters[L.id] && S.letters[L.id].read;
     return `<button class="letter ${open ? '' : 'locked'} ${open && !read ? 'new' : ''}" data-act="${open ? 'letter' : 'letterLocked'}" data-arg="${L.id}">
       <span class="env">${open ? '✉️' : '🔒'}</span><span class="grow"><b>${esc(L.title)}</b><br><span class="small muted">${open ? (read ? 'Gelesen' : 'Neu! Jetzt lesen') : 'Erst lesen, wenn ' + esc(L.unlock)}</span></span></button>`;
   }).join('');
-  const notes = Object.values(S.notes).filter(n => !n.deleted).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt);
-  const tr = analyze('stevie');
+  const notes = Object.values(S.notes).filter(n => !n.deleted && (n.animal || 'stevie') === CA).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.createdAt - a.createdAt);
+  const tr = analyze(CA);
   const levelDone = n => n < 4 ? (tr.gesamt && tr.gesamt.achieved[n] !== undefined) : LEGS.some(l => tr[l] && tr[l].achieved[n] !== undefined);
   const minis = P.levels.map(L => {
-    const done = L.minis.filter((_, i) => S.minis[L.n + '-' + i] && S.minis[L.n + '-' + i].done).length;
+    const done = L.minis.filter((_, i) => { const k = miniKey(CA, L.n + '-' + i); return S.minis[k] && S.minis[k].done; }).length;
     return `<details class="acc"><summary><span class="lvbubble ${levelDone(L.n) ? 'done' : ''}">${L.n}</span><b>${esc(L.name)}</b><span class="cnt">${done}/${L.minis.length}</span></summary>
-      ${L.minis.map((m, i) => { const k = L.n + '-' + i; const o = S.minis[k] && S.minis[k].done; return `<button class="mini ${o ? 'on' : ''}" data-act="mini" data-arg="${k}"><span class="box">${o ? '✓' : ''}</span><span>${esc(m)}${o ? `<small>${fmtShort(S.minis[k].date)}${S.minis[k].who ? ' · ' + WHO[S.minis[k].who] : ''}</small>` : ''}</span></button>`; }).join('')}
+      ${L.minis.map((m, i) => { const k = miniKey(CA, L.n + '-' + i); const o = S.minis[k] && S.minis[k].done; return `<button class="mini ${o ? 'on' : ''}" data-act="mini" data-arg="${k}"><span class="box">${o ? '✓' : ''}</span><span>${esc(pers(m))}${o ? `<small>${fmtShort(S.minis[k].date)}${S.minis[k].who ? ' · ' + WHO[S.minis[k].who] : ''}</small>` : ''}</span></button>`; }).join('')}
     </details>`;
   }).join('');
-  const earned = badgesEarned();
-  const badgeGrid = `<div class="card"><div class="row between"><h3>Abzeichen</h3><span class="badge">${earned.size} / ${window.BADGES.length}</span></div><div class="bgrid">${window.BADGES.map(b => `<button class="bd ${earned.has(b.id) ? 'got' : ''}" data-act="badge" data-arg="${b.id}"><span>${earned.has(b.id) ? b.icon : '🔒'}</span><b>${esc(b.name)}</b></button>`).join('')}</div></div>`;
-  return `<h1 class="pagetitle">Erfolge</h1>${badgeGrid}
-    <div class="card"><h3>Post von Stevie</h3><p class="small muted" style="margin:0">Briefe schalten sich frei, sobald ihr das jeweilige Level geschafft habt.</p>${letters}</div>
+  const earned = badgesEarned(CA);
+  const badgeGrid = `<div class="card"><div class="row between"><h3>Abzeichen ${esc(nm(CA))}</h3><span class="badge">${earned.size} / ${window.BADGES.length}</span></div><div class="bgrid">${window.BADGES.map(b => `<button class="bd ${earned.has(b.id) ? 'got' : ''}" data-act="badge" data-arg="${b.id}"><span>${earned.has(b.id) ? b.icon : '🔒'}</span><b>${esc(b.name)}</b></button>`).join('')}</div></div>`;
+  return `<h1 class="pagetitle">Erfolge</h1>${animalBar(true)}${badgeGrid}
+    ${letters ? `<div class="card"><h3>Post von ${esc(nm(CA))}</h3><p class="small muted" style="margin:0">Briefe schalten sich frei, sobald ihr das jeweilige Level geschafft habt.</p>${letters}</div>` : ''}
     <div class="card"><div class="row between"><h3>Erfolge & Erkenntnisse</h3><button class="btn sm primary" data-act="newNote">＋ Neu</button></div>
-      ${notes.length ? notes.map(n => `<button class="note" style="display:block;width:100%;text-align:left" data-act="editNote" data-arg="${n.id}"><div class="kind ${n.type}">${n.type === 'erfolg' ? '★ Erfolg' : '💡 Erkenntnis'}</div><p>${esc(n.text)}</p><div class="small muted">${fmtLong(n.date)} · ${WHO[n.who] || ''}</div></button>`).join('') : '<p class="small muted">Haltet hier fest, was euch auffällt und was gelungen ist – „Er hat heute zum ersten Mal wiedergekäut“, „Summen kommt immer, wenn …“.</p>'}
+      ${notes.length ? notes.map(n => `<button class="note" style="display:block;width:100%;text-align:left" data-act="editNote" data-arg="${n.id}"><div class="kind ${n.type}">${n.type === 'erfolg' ? '★ Erfolg' : '💡 Erkenntnis'}</div><p>${esc(n.text)}</p><div class="small muted">${fmtLong(n.date)} · ${WHO[n.who] || ''}</div></button>`).join('') : '<p class="small muted">Haltet hier fest, was euch bei ${esc(nm(CA))} auffällt und was gelungen ist – „Er hat heute zum ersten Mal wiedergekäut“, „Summen kommt immer, wenn …“.</p>'}
     </div>
     <div class="card"><h3>Mini-Erfolge</h3><p class="small muted" style="margin:0 0 6px">Jeder Haken zählt.</p>${minis}</div>`;
 }
@@ -778,12 +809,12 @@ function levelDetail(n) {
   return `<div class="lvcard">
     <div class="eyebrow">Level ${L.n} · ${esc(L.meta)}</div>
     <h2>${esc(L.name)}</h2>
-    <p class="goal">${esc(L.goal)}</p>
-    <div class="think">„${esc(L.think)}“ <span class="small muted" style="font-style:normal">– Stevie denkt</span></div>
-    <h4>So geht’s</h4><ol class="steps">${L.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
-    <h4>Weiter, wenn …</h4><ul class="checks done">${L.next.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
-    <h4>Wenn es hakt</h4><div class="hakt">${L.hakt.map(([a, b]) => `<div><b>${esc(a)}</b><span>→ ${esc(b)}</span></div>`).join('')}</div>
-    <h4>Mini-Erfolge</h4>${L.minis.map((m, i) => { const k = L.n + '-' + i; const o = S.minis[k] && S.minis[k].done; return `<button class="mini ${o ? 'on' : ''}" data-act="mini" data-arg="${k}"><span class="box">${o ? '✓' : ''}</span><span>${esc(m)}${o ? `<small>${fmtShort(S.minis[k].date)}</small>` : ''}</span></button>`; }).join('')}
+    <p class="goal">${esc(pers(L.goal))}</p>
+    <div class="think">„${esc(L.think)}“ <span class="small muted" style="font-style:normal">– ${esc(nm(CA))} denkt</span></div>
+    <h4>So geht’s</h4><ol class="steps">${L.steps.map(s => `<li>${esc(pers(s))}</li>`).join('')}</ol>
+    <h4>Weiter, wenn …</h4><ul class="checks done">${L.next.map(s => `<li>${esc(pers(s))}</li>`).join('')}</ul>
+    <h4>Wenn es hakt</h4><div class="hakt">${L.hakt.map(([a, b]) => `<div><b>${esc(pers(a))}</b><span>→ ${esc(pers(b))}</span></div>`).join('')}</div>
+    <h4>Mini-Erfolge ${esc(nm(CA))}</h4>${L.minis.map((m, i) => { const k = miniKey(CA, L.n + '-' + i); const o = S.minis[k] && S.minis[k].done; return `<button class="mini ${o ? 'on' : ''}" data-act="mini" data-arg="${k}"><span class="box">${o ? '✓' : ''}</span><span>${esc(pers(m))}${o ? `<small>${fmtShort(S.minis[k].date)}</small>` : ''}</span></button>`; }).join('')}
     ${L.box ? `<div class="callout"><b>${esc(L.box[0])}</b><br>${esc(L.box[1])}</div>` : ''}
     <div class="btns"><button class="btn" ${L.n === 0 ? 'disabled style="opacity:.4"' : ''} data-act="level" data-arg="${L.n - 1}">← Level ${Math.max(0, L.n - 1)}</button><button class="btn" ${L.n === 9 ? 'disabled style="opacity:.4"' : ''} data-act="level" data-arg="${L.n + 1}">Level ${Math.min(9, L.n + 1)} →</button></div>
   </div>`;
@@ -835,7 +866,7 @@ function toast(msg, undo) {
 
 // Session-Formular
 let F = null;
-function defaultForm(animal = 'stevie', minutes) {
+function defaultForm(animal = CA, minutes) {
   const ov = overview(animal);
   let level = 1, legs = [];
   if (!ov.legPhase) level = ov.main.level ?? (animal === 'stupsi' ? 2 : 1);
@@ -864,9 +895,9 @@ function sessionForm() {
   <div class="formsec">
     <div class="row"><div class="grow"><label class="flabel">Datum</label><input type="date" data-f="date" value="${f.date}"></div><div style="width:118px"><label class="flabel">Uhrzeit</label><input type="time" data-f="time" value="${f.time || ''}"></div></div>
     <div class="row" style="margin-top:12px;align-items:flex-start"><div class="grow"><div class="flabel">Wer?</div><div class="chips">${['F', 'J'].map(w => `<button class="chip ${f.who === w ? 'on' : ''}" data-act="f" data-k="who" data-arg="${w}">${WHO[w]}</button>`).join('')}</div></div>
-    <div><div class="flabel">Tier</div><div class="chips">${['stevie', 'stupsi'].map(a => `<button class="chip ${f.animal === a ? 'on' : ''}" data-act="f" data-k="animal" data-arg="${a}">${ANIMAL[a]}</button>`).join('')}</div></div></div>
+    <div><div class="flabel">Tier</div><div class="chips">${animalsOn().map(a => `<button class="chip ${f.animal === a ? 'on' : ''}" data-act="f" data-k="animal" data-arg="${a}">${ANIMAL[a]}</button>`).join('')}</div></div></div>
   </div>
-  <div class="formsec"><div class="flabel"><span class="stepno">1</span>Level</div><div class="lvgrid">${P.levels.map(x => `<button class="chip ${f.level === x.n ? 'on' : ''}" data-act="f" data-k="level" data-arg="${x.n}">${x.n}</button>`).join('')}</div><div class="lvname"><b>${esc(L.name)}</b> · ${esc(L.goal)}</div>
+  <div class="formsec"><div class="flabel"><span class="stepno">1</span>Level</div><div class="lvgrid">${P.levels.map(x => `<button class="chip ${f.level === x.n ? 'on' : ''}" data-act="f" data-k="level" data-arg="${x.n}">${x.n}</button>`).join('')}</div><div class="lvname"><b>${esc(L.name)}</b> · ${esc(pers(L.goal, f.animal))}</div>
   ${legsShown ? `<div class="flabel" style="margin-top:14px">Heute geübt <small>(Bein${f.level < 4 ? ', optional' : ', mehrere möglich'})</small></div><div class="legpick">${LEGS.map(l => `<button class="chip ${f.legs.includes(l) ? 'on' : ''}" data-act="fleg" data-arg="${l}"><b>${l}</b><small>${LEGNAME[l]}</small></button>`).join('')}</div>` : ''}
   <div class="flabel" style="margin-top:14px">Dauer</div><div class="stepper"><button data-act="fmin" data-arg="-1" aria-label="weniger">−</button><b>${f.minutes} Min.</b><button data-act="fmin" data-arg="1" aria-label="mehr">＋</button>${f.minutes > 5 ? '<span class="small" style="color:var(--b2)">länger als geplant</span>' : ''}</div></div>
   <div class="formsec"><div class="flabel"><span class="stepno">2</span>Signale <small>– optional, macht die Muster viel besser</small></div>${signalPicker(f)}</div>
@@ -893,18 +924,18 @@ function saveSession() {
   const isNew = !F.id;
   const beforeAch = achievementsSet(F.animal);
   const beforeLetters = lettersUnlocked();
-  const beforeBadges = badgesEarned();
+  const beforeBadges = badgesEarned(F.animal);
   const id = F.id || uid();
   const prev = S.sessions[id] || {};
   S.sessions[id] = { id, date: F.date || today(), time: F.time || '', who: F.who, animal: F.animal, level: F.level, legs: F.legs.slice(), minutes: F.minutes, baro: F.baro, signals: F.signals.slice(), goodday: F.goodday.slice(), good: F.good.trim(), next: F.next.trim(), createdAt: prev.createdAt || Date.now(), updatedAt: Date.now() };
   if (isNew && F.erfolg && F.good.trim()) {
-    const nid = uid(); S.notes[nid] = { id: nid, type: 'erfolg', text: F.good.trim(), date: F.date, who: F.who, createdAt: Date.now(), updatedAt: Date.now() };
+    const nid = uid(); S.notes[nid] = { id: nid, type: 'erfolg', text: F.good.trim(), date: F.date, who: F.who, animal: F.animal, createdAt: Date.now(), updatedAt: Date.now() };
   }
   const afterAch = achievementsSet(F.animal);
   const newAch = [...afterAch].filter(x => !beforeAch.has(x));
   const afterLetters = lettersUnlocked();
   const newLetters = Object.keys(afterLetters).filter(k => !beforeLetters[k]);
-  const afterBadges = badgesEarned();
+  const afterBadges = badgesEarned(F.animal);
   const newBadges = [...afterBadges].filter(x => !beforeBadges.has(x));
   const prevCopy = Object.keys(prev).length ? JSON.parse(JSON.stringify(prev)) : null;
   closeSheet();
@@ -918,7 +949,7 @@ Barometer ${sv.baro} · ${P.baro[sv.baro].name} · ${sv.minutes} Min.${sv.good ?
   }
   if (newAch.length) notify('success', `🎉 ${ANIMAL[F.animal]} hat es geschafft!`, newAch.map(x => { const [leg, n] = x.split(':'); return `Level ${n} · ${lv(+n).name}${leg !== 'gesamt' ? ' (' + leg + ')' : ''}`; }).join('\n') + '\n2 gute Sessions in Folge.', { tags: 'tada' });
   if (newBadges.length) notify('success', '🏅 Neues Abzeichen', newBadges.map(b => { const x = window.BADGES.find(y => y.id === b); return x.icon + ' ' + x.name; }).join('\n'), {});
-  if (newLetters.length) notify('success', '✉️ Post von Stevie ist da', 'Ein neuer Brief wartet in der App unter „Erfolge“.', {});
+  if (newLetters.length) notify('success', '✉️ Neue Post im Stall', 'Ein neuer Brief wartet in der App unter „Erfolge“.', {});
   if (newAch.length || newBadges.length) { celebrate(F.animal, newAch, newLetters, newBadges); return; }
   else if (isNew) {
     const ov = overview(F.animal);
@@ -934,7 +965,7 @@ function celebrate(animal, ach, newLetters, newBadges = []) {
     <h2>${ach.length ? ANIMAL[animal] + ' hat es geschafft!' : 'Neues Abzeichen!'}</h2>
     ${ach.length ? `<p>${items.join('<br>')}</p><p class="muted small">2 gute Sessions in Folge. Nächstes Mal geht es mit ${top >= 9 ? 'dem nächsten Fuß' : 'Level ' + (top + 1) + ' · ' + esc(lv(top + 1).name)} weiter.</p>` : ''}
     ${bdg.length ? `<div class="badgerow">${bdg.map(b => `<div class="badge-big"><span>${b.icon}</span><b>${esc(b.name)}</b><small>${esc(b.req)}</small></div>`).join('')}</div>` : ''}
-    ${newLetters.length ? `<div class="callout" style="text-align:left"><b>✉️ Post von Stevie ist da!</b><br>Ein neuer Brief wartet unter „Erfolge“.</div><div class="btns"><button class="btn" data-act="closeSheet">Später</button><button class="btn terra" data-act="letter" data-arg="${newLetters[0]}">Brief lesen</button></div>` : `<div class="btns"><button class="btn primary" data-act="closeSheet">Super</button></div>`}</div>`);
+    ${newLetters.length ? `<div class="callout" style="text-align:left"><b>✉️ Neue Post ist da!</b><br>Ein neuer Brief wartet unter „Erfolge“.</div><div class="btns"><button class="btn" data-act="closeSheet">Später</button><button class="btn terra" data-act="letter" data-arg="${newLetters[0]}">Brief lesen</button></div>` : `<div class="btns"><button class="btn primary" data-act="closeSheet">Super</button></div>`}</div>`);
   haptic([30, 60, 30]); confetti();
 }
 function confetti() {
@@ -944,54 +975,55 @@ function confetti() {
   const ps = Array.from({ length: 90 }, () => ({ x: c.width / 2, y: 120, vx: (Math.random() - .5) * 18, vy: -Math.random() * 14 - 4, s: 6 + Math.random() * 8, c: cols[Math.random() * cols.length | 0], r: Math.random() * 6, vr: (Math.random() - .5) * .4 }));
   let t = 0; (function f() { x.clearRect(0, 0, c.width, c.height); for (const p of ps) { p.vy += .55; p.x += p.vx; p.y += p.vy; p.r += p.vr; x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); } if (++t < 110 && sheetOpen) requestAnimationFrame(f); else x.clearRect(0, 0, c.width, c.height); })();
 }
-function badgesEarned() {
+function badgesEarned(animal = CA) {
   const out = new Set();
-  const all = sessionsOf(), ss = sessionsOf('stevie');
-  if (all.length) out.add('first');
-  if (all.length >= 25) out.add('s25');
+  const all = sessionsOf(), ss = sessionsOf(animal);
+  if (ss.length) out.add('first');
+  if (ss.length >= 25) out.add('s25');
   const wk = {}; for (const s of ss) wk[weekStart(s.date)] = (wk[weekStart(s.date)] || 0) + 1;
   if (Object.values(wk).some(n => n >= 4)) out.add('week');
   let run = 0; for (const s of ss) { run = s.baro <= 1 ? run + 1 : 0; if (run >= 5) out.add('calm5'); }
-  if (all.filter(s => (s.goodday || []).includes(3)).length >= 5) out.add('early');
-  if (all.filter(s => (s.goodday || []).includes(2)).length >= 3) out.add('lighter');
-  if (all.filter(s => (s.signals || []).length).length >= 10) out.add('detective');
-  if (all.some(s => (s.signals || []).includes('Kaut wieder / frisst'))) out.add('chew');
+  if (ss.filter(s => (s.goodday || []).includes(3)).length >= 5) out.add('early');
+  if (ss.filter(s => (s.goodday || []).includes(2)).length >= 3) out.add('lighter');
+  if (ss.filter(s => (s.signals || []).length).length >= 10) out.add('detective');
+  if (ss.some(s => (s.signals || []).includes('Kaut wieder / frisst'))) out.add('chew');
   const bd = Object.keys(S.bowl).filter(d => S.bowl[d].done).sort();
   if (bd.length >= 30) out.add('bowl30');
   let br = 0; for (let i = 0; i < bd.length; i++) { br = i && daysBetween(bd[i - 1], bd[i]) === 1 ? br + 1 : 1; if (br >= 7) out.add('bowl7'); }
   if (ss.some(s => s.who === 'J' && s.level >= 2 && s.baro <= 1)) out.add('two');
-  if (Object.values(S.rest).some(r => r.on)) out.add('rest');
-  const tr = analyze('stevie');
+  if (Object.keys(S.rest).some(k => S.rest[k].on && (animal === 'stevie' ? !k.includes(':') : k.startsWith(animal + ':')))) out.add('rest');
+  const tr = analyze(animal);
   if (tr.gesamt && tr.gesamt.achieved[3] !== undefined) out.add('l3');
   for (const n of [5, 6, 7]) if (LEGS.some(l => tr[l] && tr[l].achieved[n] !== undefined)) out.add('l' + n);
   if (ss.some(s => s.level === 9 && s.baro <= 1)) out.add('cut');
   if (LEGS.every(l => tr[l] && tr[l].achieved[9] !== undefined)) out.add('all4');
-  if (S.week8 && S.week8.updatedAt) out.add('w8');
-  if (sessionsOf('stupsi').length) out.add('stupsi');
+  if (w8Of(animal) && w8Of(animal).updatedAt) out.add('w8');
+  if (new Set(all.map(s => s.animal)).size >= 2) out.add('stupsi');
   return out;
 }
 
 // Timer
 let TS = null; // gewählte Session
-function recommended(animal = 'stevie') {
+function recommended(animal = CA) {
   const ov = overview(animal);
   if (!ov.legPhase) return { level: ov.main.level ?? 1, legs: [] };
   return { level: ov.legs[ov.focus].level, legs: [ov.focus] };
 }
-function startTimerSheet(level, leg) {
-  const rec = recommended();
-  TS = { level: level ?? rec.level, legs: leg ? [leg] : rec.legs.slice(), rec, sound: lsGet('stevie.sound') !== '0' };
+function startTimerSheet(level, leg, animal = CA) {
+  const rec = recommended(animal);
+  TS = { animal, level: level ?? rec.level, legs: leg ? [leg] : rec.legs.slice(), rec, sound: lsGet('stevie.sound') !== '0' };
   renderStartSheet();
 }
 function renderStartSheet() {
-  const L = lv(TS.level); const ov = overview('stevie');
+  const L = lv(TS.level); const ov = overview(TS.animal); const A = nm(TS.animal);
   const legsShown = TS.level >= 4 || ov.legPhase;
   const diff = TS.level - TS.rec.level;
   openSheet(`<div class="sheethead"><h2>Session starten</h2><button class="x" data-act="closeSheet" aria-label="Schließen">✕</button></div>
+    ${animalsOn().length > 1 ? `<div class="formsec"><div class="flabel">Mit wem?</div><div class="chips">${animalsOn().map(a => `<button class="chip ${TS.animal === a ? 'on' : ''}" data-act="tsAnimal" data-arg="${a}">${esc(nm(a))}</button>`).join('')}</div></div>` : ''}
     <div class="formsec"><div class="flabel">Welches Level heute? <span class="badge" style="margin-left:auto">Empfohlen: ${TS.rec.level}</span></div>
       <div class="lvgrid">${P.levels.map(x => `<button class="chip ${TS.level === x.n ? 'on' : ''} ${TS.rec.level === x.n ? 'rec' : ''}" data-act="tsLevel" data-arg="${x.n}">${x.n}</button>`).join('')}</div>
-      <div class="lvname"><b>${esc(L.name)}</b> · ${esc(L.goal)}</div>
-      ${diff < 0 ? `<div class="sighint" style="background:var(--b0s)">👍 Bewusst leichter – eine gute Entscheidung, wenn die letzte Session anstrengend war. Läuft es ruhig, geht’s danach wieder hoch.</div>` : diff > 0 ? `<div class="sighint" style="background:var(--b2s)">⚠️ Höher als empfohlen. Nur, wenn Stevie das aktuelle Level wirklich sicher kann.</div>` : ''}
+      <div class="lvname"><b>${esc(L.name)}</b> · ${esc(pers(L.goal, TS.animal))}</div>
+      ${diff < 0 ? `<div class="sighint" style="background:var(--b0s)">👍 Bewusst leichter – eine gute Entscheidung, wenn die letzte Session anstrengend war. Läuft es ruhig, geht’s danach wieder hoch.</div>` : diff > 0 ? `<div class="sighint" style="background:var(--b2s)">⚠️ Höher als empfohlen. Nur, wenn ${A} das aktuelle Level wirklich sicher kann.</div>` : ''}
       ${legsShown ? `<div class="flabel" style="margin-top:12px">Bein</div><div class="legpick">${LEGS.map(l => `<button class="chip ${TS.legs.includes(l) ? 'on' : ''}" data-act="tsLeg" data-arg="${l}"><b>${l}</b><small>${ov.legPhase ? 'L ' + ov.legs[l].level : LEGNAME[l]}</small></button>`).join('')}</div>` : ''}
     </div>
     <div class="formsec"><div class="flabel">Vorher: 30-Sekunden-Check</div><ul class="checks pre" id="pre">${P.precheck.map((x, i) => `<li data-act="pre" data-arg="${i}">${esc(x)}</li>`).join('')}</ul></div>
@@ -1009,15 +1041,15 @@ function runTimer() {
   const L = lv(TS.level);
   if ($('#tsSound')) { TS.sound = $('#tsSound').checked; lsSet('stevie.sound', TS.sound ? '1' : '0'); }
   if (TS.sound) { chime.ctx = chime.ctx || new (window.AudioContext || window.webkitAudioContext)(); chime.ctx.resume && chime.ctx.resume(); }
-  if (TS.level >= 4 && !TS.legs.length) TS.legs = [recommended().legs[0] || 'VL'];
+  if (TS.level >= 4 && !TS.legs.length) TS.legs = [recommended(TS.animal).legs[0] || 'VL'];
   timer = { start: Date.now(), L };
   try { navigator.wakeLock && navigator.wakeLock.request('screen').then(w => timer && (timer.wake = w)).catch(() => { }); } catch { }
   const ph = P.phases;
-  openSheet(`<div class="timer"><div class="eyebrow">Level ${L.n} · ${esc(L.name)}${TS.legs.length ? ' · ' + TS.legs.join(' ') : ''}</div><div class="clock" id="tClock">0:00</div><div class="ph" id="tPh"></div><div class="phh" id="tPhh"></div>
+  openSheet(`<div class="timer"><div class="eyebrow">${esc(nm(TS.animal))} · Level ${L.n} · ${esc(L.name)}${TS.legs.length ? ' · ' + TS.legs.join(' ') : ''}</div><div class="clock" id="tClock">0:00</div><div class="ph" id="tPh"></div><div class="phh" id="tPhh"></div>
     <div class="phbar" id="tBar">${ph.slice(0, 5).map((p, i) => `<span style="flex:${ph[i + 1].t - p.t}"></span>`).join('')}</div>
     <div class="row between small muted"><span>0:00</span><span>5:00</span></div></div>
-    <div class="callout"><b>Das Neue heute:</b> ${esc(L.goal)}</div>
-    <details class="more"><summary>So geht’s (Level ${L.n})</summary><ol class="steps">${L.steps.map(x => `<li>${esc(x)}</li>`).join('')}</ol></details>
+    <div class="callout"><b>Das Neue heute:</b> ${esc(pers(L.goal, TS.animal))}</div>
+    <details class="more"><summary>So geht’s (Level ${L.n})</summary><ol class="steps">${L.steps.map(x => `<li>${esc(pers(x, TS.animal))}</li>`).join('')}</ol></details>
     <div class="stopword"><span>Stop-Wort</span><b>${esc(S.settings.stopWord || 'STOPP')}</b><span class="small" style="font-weight:600">Lieber früher aufhören.</span></div>
     <div class="btns"><button class="btn" data-act="closeSheet">Abbrechen</button><button class="btn primary" data-act="stopTimer">Session beenden</button></div>`);
   sheetOpen = true;
@@ -1039,6 +1071,7 @@ let N = null;
 function noteForm() {
   return `<h2>${N.id ? 'Eintrag bearbeiten' : 'Neuer Eintrag'}</h2>
   <div class="field"><div class="chips"><button class="chip ${N.type === 'erfolg' ? 'on' : ''}" data-act="n" data-k="type" data-arg="erfolg">★ Erfolg</button><button class="chip ${N.type === 'erkenntnis' ? 'on' : ''}" data-act="n" data-k="type" data-arg="erkenntnis">💡 Erkenntnis</button></div></div>
+  ${animalsOn().length > 1 ? `<div class="field"><div class="chips">${animalsOn().map(a => `<button class="chip ${(N.animal || 'stevie') === a ? 'on' : ''}" style="min-height:36px" data-act="n" data-k="animal" data-arg="${a}">${esc(nm(a))}</button>`).join('')}</div></div>` : ''}
   <div class="field"><textarea data-n="text" style="min-height:110px" placeholder="${N.type === 'erfolg' ? 'Was ist gelungen?' : 'Was habt ihr gemerkt oder verstanden?'}">${esc(N.text)}</textarea></div>
   <div class="row"><div class="grow"><label class="flabel">Datum</label><input type="date" data-n="date" value="${N.date}"></div><div><div class="flabel">Wer?</div><div class="chips">${['F', 'J'].map(w => `<button class="chip ${N.who === w ? 'on' : ''}" data-act="n" data-k="who" data-arg="${w}">${WHO[w]}</button>`).join('')}</div></div></div>
   <div class="btns">${N.id ? '<button class="btn" data-act="delNote">Löschen</button>' : '<button class="btn" data-act="closeSheet">Abbrechen</button>'}<button class="btn primary" data-act="saveNote">Speichern</button></div>`;
@@ -1053,7 +1086,9 @@ function settingsSheet() {
     <div class="field"><div class="flabel">Darstellung</div><div class="seg" style="margin:0">${[['auto', 'Automatisch'], ['light', 'Hell'], ['dark', 'Dunkel']].map(([k, l]) => `<button class="${(lsGet('stevie.theme') || 'auto') === k ? 'on' : ''}" data-act="theme" data-arg="${k}">${l}</button>`).join('')}</div></div>
     <div class="field"><div class="flabel">Wer nutzt dieses Handy?</div><div class="chips">${['F', 'J'].map(w => `<button class="chip ${me === w ? 'on' : ''}" data-act="setMe" data-arg="${w}">${WHO[w]}</button>`).join('')}</div></div>
     <div class="card"><h3>Judith (oder Fabi) einladen</h3><p class="small muted">Wer diesen Link öffnet, sieht und bearbeitet dieselben Daten. Am besten danach im Browser „Zum Home-Bildschirm“ wählen.</p><div class="code">${esc(shareLink())}</div><div class="btns"><button class="btn primary" data-act="share">Link teilen</button><button class="btn" data-act="copy">Kopieren</button></div></div>
-    <div class="field"><label>Startdatum des 12-Wochen-Plans</label><input type="date" id="setStart" value="${esc(S.settings.startDate || today())}"></div>
+    <div class="card"><h3>🦙 Tiere im Training</h3><p class="small muted" style="margin-top:0">Aktive Tiere erscheinen oben als Auswahl. Startdatum = Beginn des 12-Wochen-Fahrplans für dieses Tier.</p>
+      ${ALL_ANIMALS.map(a => { const has = sessionsOf(a).length > 0; const on = animalsOn().includes(a); return `<div class="arow"><label class="toggle" style="flex:1"><input type="checkbox" class="setAnimal" value="${a}" ${on ? 'checked' : ''} ${has || a === 'stevie' ? 'disabled' : ''}> ${esc(nm(a))}${has ? ' <span class="small muted">(hat Sessions)</span>' : ''}</label><input type="date" class="setStartA" data-a="${a}" value="${esc(on ? startOf(a) : today())}" style="width:150px"></div>`; }).join('')}
+      <input type="hidden" id="setStart" value=""></div>
     <div class="field"><label>Stop-Wort</label><input type="text" id="setStop" value="${esc(S.settings.stopWord || 'STOPP')}"></div>
     <button class="btn primary block" data-act="saveSettings">Speichern</button>
     <hr class="sep">
@@ -1093,7 +1128,7 @@ document.addEventListener('click', async e => {
       S = loadLocal(); render(); askWho(); await sync(); break;
     }
     case 'setMe': me = arg; lsSet('stevie.me', me); lsSet('stevie.pushSync', ''); refreshPushSub(); if ($('#setStart')) settingsSheet(); else closeSheet(); toast('Hallo ' + WHO[me] + '!'); break;
-    case 'newSession': openSessionForm(arg || 'stevie'); break;
+    case 'newSession': openSessionForm(arg || CA); break;
     case 'editSession': { const s = S.sessions[arg]; if (!s) return; F = Object.assign(defaultForm(s.animal), JSON.parse(JSON.stringify(s)), { erfolg: false }); F.legs = F.legs || []; F.signals = F.signals || []; F.goodday = F.goodday || []; F.sigGroup = 'ohren'; F.lastSig = null; openSheet(sessionForm()); break; }
     case 'f': { const k = el.dataset.k; let v = arg; if (k === 'level' || k === 'baro') v = +v; F[k] = v; if (k === 'level' && v >= 4 && !F.legs.length) { const ov = overview(F.animal); F.legs = [ov.focus || 'VL']; } if (k === 'animal') { const d = defaultForm(v, F.minutes); F.level = d.level; F.legs = d.legs; } rerenderForm(); break; }
     case 'fleg': F.legs = F.legs.includes(arg) ? F.legs.filter(x => x !== arg) : [...F.legs, arg]; rerenderForm(); break;
@@ -1107,35 +1142,38 @@ document.addEventListener('click', async e => {
     case 'pushOff': disablePush(); break;
     case 'pushTest': currentSub().then(sub => sub && api({ action: 'test', endpoint: sub.endpoint, title: '🦙 Test', body: 'Stevie sagt Hallo.' })); toast('Test gesendet'); break;
     case 'hideInstall': lsSet('stevie.installHint', 'x'); render(); break;
-    case 'rest': { const d = today(); const on = !(S.rest[d] && S.rest[d].on); S.rest[d] = { on, who: me || '', updatedAt: Date.now() }; commit(on ? 'Ruhetag eingetragen. Auch das ist Training. 🌙' : 'Ruhetag entfernt'); if (on) scheduleIdle(); break; }
+    case 'rest': { const d = today(); const k = restKey(CA, d); const on = !restOn(CA, d); S.rest[k] = { on, who: me || '', updatedAt: Date.now() }; commit(on ? 'Ruhetag für ' + nm(CA) + '. Auch das ist Training. 🌙' : 'Ruhetag entfernt'); if (on) scheduleIdle(); break; }
     case 'theme': lsSet('stevie.theme', arg); applyTheme(); settingsSheet(); break;
     case 'report': shareReport(); break;
     case 'badge': { const b = window.BADGES.find(x => x.id === arg); toast(b.icon + ' ' + b.name + ': ' + b.req); break; }
     case 'delSession': if (confirm('Diese Session löschen?')) { S.sessions[F.id] = Object.assign({}, S.sessions[F.id], { deleted: true, updatedAt: Date.now() }); closeSheet(); commit('Gelöscht'); } break;
-    case 'bowl': { const d = today(); const on = !(S.bowl[d] && S.bowl[d].done); S.bowl[d] = { done: on, who: me || 'J', updatedAt: Date.now() }; commit(on ? 'Futterschale ✓ – Stevie freut sich' : 'Zurückgenommen'); scheduleBowl(true); break; }
+    case 'bowl': { const d = today(); const on = !(S.bowl[d] && S.bowl[d].done); S.bowl[d] = { done: on, who: me || 'J', updatedAt: Date.now() }; commit(on ? 'Futterschale ✓ – die Herde freut sich' : 'Zurückgenommen'); scheduleBowl(true); break; }
     case 'level': tab = 'wissen'; lsSet('stevie.tab', tab); sub.wlevel = +arg; if (sheetOpen) closeSheet(); render(); window.scrollTo(0, 0); break;
     case 'wissen': tab = 'wissen'; lsSet('stevie.tab', tab); sub.wissen = arg; sub.wlevel = null; render(); window.scrollTo(0, 0); break;
     case 'wback': if (sub.wlevel !== null) sub.wlevel = null; else sub.wissen = null; render(); window.scrollTo(0, 0); break;
     case 'mini': { const o = S.minis[arg] && S.minis[arg].done; S.minis[arg] = { done: !o, date: today(), who: me || '', updatedAt: Date.now() }; commit(o ? '' : 'Mini-Erfolg ✓'); break; }
     case 'letter': openLetter(arg); break;
-    case 'letterLocked': { const L = P.letters.find(x => x.id === arg); if (arg === 'l5') { openSheet(`<h2>${esc(L.title)}</h2><p>Zum Lesen, wenn ihr bei Level 9 angekommen seid. Oder an einem Tag, an dem ihr ihn braucht.</p><div class="btns"><button class="btn" data-act="closeSheet">Noch warten</button><button class="btn terra" data-act="forceL5">Heute brauch ich ihn</button></div>`); } else toast('Erst lesen, wenn ' + L.unlock + '. Stevie besteht darauf.'); break; }
+    case 'letterLocked': { const L = allLetters().find(x => x.id === arg); if (arg === 'l5') { openSheet(`<h2>${esc(L.title)}</h2><p>Zum Lesen, wenn ihr bei Level 9 angekommen seid. Oder an einem Tag, an dem ihr ihn braucht.</p><div class="btns"><button class="btn" data-act="closeSheet">Noch warten</button><button class="btn terra" data-act="forceL5">Heute brauch ich ihn</button></div>`); } else toast('Erst lesen, wenn ' + L.unlock + '. Stevie besteht darauf.'); break; }
     case 'forceL5': S.letters.l5 = Object.assign({}, S.letters.l5, { forced: true, updatedAt: Date.now() }); openLetter('l5'); break;
-    case 'newNote': N = { id: null, type: 'erfolg', text: '', date: today(), who: me || 'F' }; openSheet(noteForm()); break;
+    case 'newNote': N = { id: null, type: 'erfolg', text: '', date: today(), who: me || 'F', animal: CA }; openSheet(noteForm()); break;
     case 'editNote': N = Object.assign({}, S.notes[arg]); openSheet(noteForm()); break;
     case 'n': N[el.dataset.k] = arg; $('#sheet').innerHTML = '<div class="grab"></div>' + noteForm(); break;
-    case 'saveNote': { if (!N.text.trim()) { toast('Bitte etwas eintragen.'); return; } const id = N.id || uid(); S.notes[id] = { id, type: N.type, text: N.text.trim(), date: N.date || today(), who: N.who, createdAt: (S.notes[id] && S.notes[id].createdAt) || Date.now(), updatedAt: Date.now() }; closeSheet(); commit('Festgehalten ✓'); break; }
+    case 'saveNote': { if (!N.text.trim()) { toast('Bitte etwas eintragen.'); return; } const id = N.id || uid(); S.notes[id] = { id, type: N.type, text: N.text.trim(), date: N.date || today(), who: N.who, animal: N.animal || CA, createdAt: (S.notes[id] && S.notes[id].createdAt) || Date.now(), updatedAt: Date.now() }; closeSheet(); commit('Festgehalten ✓'); break; }
     case 'delNote': if (confirm('Eintrag löschen?')) { S.notes[N.id] = Object.assign({}, S.notes[N.id], { deleted: true, updatedAt: Date.now() }); closeSheet(); commit('Gelöscht'); } break;
-    case 'w8dec': { const w = collectW8(); w.decision = arg; S.week8 = Object.assign({}, w, { updatedAt: Date.now() }); commit(); break; }
-    case 'saveW8': { const w = collectW8(); S.week8 = Object.assign({}, w, { updatedAt: Date.now() }); commit('Woche-8-Check gespeichert ✓'); break; }
+    case 'w8dec': { const w = collectW8(); w.decision = arg; setW8(w); commit(); break; }
+    case 'saveW8': { setW8(collectW8()); commit('Woche-8-Check gespeichert ✓'); break; }
     case 'startTimer': startTimerSheet(arg !== undefined ? +arg : undefined, el.dataset.leg); break;
     case 'pre': el.parentElement.classList.add('done'); el.style.opacity = '.55'; el.style.textDecoration = 'line-through'; break;
     case 'goTimer': runTimer(); break;
-    case 'tsLevel': TS.level = +arg; if (TS.level >= 4 && !TS.legs.length) TS.legs = [recommended().legs[0] || 'VL']; renderStartSheet(); break;
+    case 'tsLevel': TS.level = +arg; if (TS.level >= 4 && !TS.legs.length) TS.legs = [recommended(TS.animal).legs[0] || 'VL']; renderStartSheet(); break;
+    case 'tsAnimal': startTimerSheet(undefined, undefined, arg); break;
+    case 'ca': CA = arg; lsSet('stevie.animal', CA); haptic(); render(); break;
+    case 'pa': PA = PA === 'all' ? 'ca' : 'all'; render(); break;
     case 'tsLeg': TS.legs = TS.legs.includes(arg) ? TS.legs.filter(x => x !== arg) : [...TS.legs, arg]; renderStartSheet(); break;
-    case 'moodInfo': { const m = moodOf(sessionsOf('stevie')); if (m) toast(m.detail + (m.hint ? ' – ' + m.hint : '')); break; }
-    case 'stopTimer': { const s = Math.max(1, Math.round((Date.now() - timer.start) / 60000)); clearInterval(timer.iv); try { timer.wake && timer.wake.release(); } catch { } timer = null; F = defaultForm('stevie', Math.min(30, s)); F.level = TS.level; F.legs = TS.legs.slice(); F.fromTimer = true; $('#sheet').innerHTML = '<div class="grab"></div>' + sessionForm(); $('#sheet').scrollTop = 0; break; }
-    case 'saveSettings': S.settings = { push: S.settings.push, startDate: $('#setStart').value || today(), stopWord: ($('#setStop').value || 'STOPP').trim().slice(0, 20), updatedAt: Date.now() }; closeSheet(); commit('Gespeichert ✓'); break;
-    case 'share': { const url = shareLink(); if (navigator.share) { try { await navigator.share({ title: 'Stevies Training', text: 'Unser gemeinsames Trainingsprotokoll für Stevie 🦙', url }); } catch { } } else { copy(url); } break; }
+    case 'moodInfo': { const m = moodOf(sessionsOf(CA)); if (m) toast(m.detail + (m.hint ? ' – ' + m.hint : '')); break; }
+    case 'stopTimer': { const s = Math.max(1, Math.round((Date.now() - timer.start) / 60000)); clearInterval(timer.iv); try { timer.wake && timer.wake.release(); } catch { } timer = null; F = defaultForm(TS.animal, Math.min(30, s)); F.level = TS.level; F.legs = TS.legs.slice(); F.fromTimer = true; $('#sheet').innerHTML = '<div class="grab"></div>' + sessionForm(); $('#sheet').scrollTop = 0; break; }
+    case 'saveSettings': S.settings = { push: S.settings.push, animals: ALL_ANIMALS.filter(a => { const c = document.querySelector('.setAnimal[value="' + a + '"]'); return a === 'stevie' || sessionsOf(a).length || (c && c.checked); }), starts: Object.fromEntries([...document.querySelectorAll('.setStartA')].filter(i => i.dataset.a !== 'stevie' && i.value).map(i => [i.dataset.a, i.value])), startDate: (document.querySelector('.setStartA[data-a="stevie"]') || {}).value || S.settings.startDate || today(), stopWord: ($('#setStop').value || 'STOPP').trim().slice(0, 20), updatedAt: Date.now() }; closeSheet(); commit('Gespeichert ✓'); break;
+    case 'share': { const url = shareLink(); if (navigator.share) { try { await navigator.share({ title: 'Stevies Training', text: 'Unser gemeinsames Trainingsprotokoll für Stevie & die Herde 🦙', url }); } catch { } } else { copy(url); } break; }
     case 'copy': copy(shareLink()); break;
     case 'export': { const blob = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stevie-backup-' + today() + '.json'; document.body.appendChild(a); a.click(); a.remove(); break; }
     case 'leave': if (confirm('Stall auf diesem Handy abmelden? Die Daten bleiben online unter dem Stall-Code erhalten.')) { lsSet('stevie.code', ''); code = ''; history.replaceState(null, '', location.pathname); closeSheet(); render(); } break;
@@ -1162,14 +1200,18 @@ document.addEventListener('change', async e => {
   }
 });
 function openLetter(id) {
-  const L = P.letters.find(x => x.id === id); if (!L) return;
+  const L = allLetters().find(x => x.id === id); if (!L) return;
   S.letters[id] = Object.assign({}, S.letters[id], { read: true, updatedAt: Date.now() });
   saveLocal(); dirty = true; clearTimeout(pushTimer); pushTimer = setTimeout(sync, 800);
   openSheet(`<div class="paper"><span class="stamp">STALL<br>${esc(L.unlock.split(' –')[0].toUpperCase())}</span>${esc(L.body)}</div><div class="btns"><button class="btn primary" data-act="closeSheet">❤️ Schön</button></div>`);
   pendingRender = true;
 }
+function setW8(w) {
+  const v = Object.assign({}, w, { updatedAt: Date.now() });
+  if (CA === 'stevie') S.week8 = v; else { S.checks = S.checks || {}; S.checks[CA] = v; }
+}
 function collectW8() {
-  const w = Object.assign({}, S.week8 || {});
+  const w = Object.assign({}, w8Of(CA) || {});
   document.querySelectorAll('[data-w8]').forEach(el => w[el.dataset.w8] = el.value);
   return w;
 }

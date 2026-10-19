@@ -337,7 +337,7 @@ window.BADGES = [
   { id: 'cut', icon: '✂️', name: 'Erster Schnitt', req: 'Eine ruhige Session auf Level 9' },
   { id: 'all4', icon: '👑', name: 'Alle vier Füße', req: 'Level 9 an allen vier Beinen' },
   { id: 'w8', icon: '🧭', name: 'Ehrlich entschieden', req: 'Woche-8-Check ausgefüllt' },
-  { id: 'stupsi', icon: '🦙', name: 'Stupsi ist dabei', req: 'Die erste Session mit Stupsi' }
+  { id: 'stupsi', icon: '🦙', name: 'Herdenarbeit', req: 'Mit einem zweiten Tier trainiert' }
 ];
 
 // Stevies Kommentare zur letzten Session (nach Barometer)
@@ -346,4 +346,32 @@ window.STEVIE_SAYS = [
   ['Ich hab aufgepasst. Ist mein Job. Aber war okay.', 'Kurz die Ohren gespitzt. Nichts passiert. Gut so.', 'Ich hab euch im Blick. Ihr mich ja auch.', 'Ein bisschen spannend. Aber nur ein bisschen.'],
   ['Das war mir ein Stück zu viel. Morgen bitte kleiner?', 'Ich hab gesummt. Ihr habt’s gehört, oder?', 'Halb so tief, halb so lang, halb so nah. Nur so als Idee.', 'Wenn ihr leichter macht, mach ich wieder mit.'],
   ['Das war nix. Aber ich bin euch nicht böse.', 'Ich brauch kurz Abstand. Die Treppe und ich.', 'Ein Level tiefer, dann klappt’s wieder. Versprochen.', 'Ein doofer Tag macht nicht alles kaputt.']
+];
+
+// ---- Mehrere Tiere ----
+window.ANIMALS = {
+  stevie: { name: 'Stevie', color: '#2f5d50', role: 'Hauptfigur',
+    note: null },
+  stupsi: { name: 'Stupsi', color: '#b8662f', role: 'Gesellschaft und Bonuskandidat',
+    note: ['Stupsis Runde', 'Gleiche Level, gleiche Regeln, eigenes Tempo. Startpunkt: zwei Level unter dem, was Stupsi heute schon entspannt mitmacht. Levels 5 bis 8 nicht überspringen, auch wenn er schneller vorankommt. Kein Wettbewerb – und Stevies Sessions bleiben Stevies Sessions.'] },
+  coco: { name: 'Coco', color: '#6d6aa8', role: 'Meister der Disziplin „Ich leg mich jetzt mal hin“',
+    note: ['Für Coco gilt', 'Nur, was sicher klappt, und nur, wenn es sich anbietet. Sein Kushen ist sein STOPP – Übung vorbei, ohne Nachsetzen. Beinarbeit erst, wenn Kreise und Hand auf dem Rücken wirklich entspannt sind.'] }
+};
+window.ANIMAL_SAYS = {
+  stupsi: [
+    ['Endlich bin ich auch mal dran. War gut. Sagt Stevie nichts.', 'Entspannt. Ich bin halt ein Naturtalent.', 'Ich hab nicht mal geguckt, ob Stevie zuschaut. Okay, einmal.'],
+    ['Ich war aufmerksam. Nennt man Professionalität.', 'Kurz gespannt, dann wieder gut. Läuft bei mir.', 'Ich hab euch beobachtet. Ihr mich auch. Fair.'],
+    ['Das war ein bisschen viel auf einmal. Ich bin ja noch neu hier.', 'Etwas kleiner nächstes Mal? Ich hab einen Ruf zu verlieren.', 'Ich bin weggegangen. Taktisch. Nicht ängstlich.'],
+    ['Nö. Heute nicht. Morgen vielleicht.', 'Ich brauch kurz Abstand. Stevie versteht das.', 'Ein Level tiefer und ich bin wieder dabei.']
+  ],
+  coco: [
+    ['Ich bin stehen geblieben. Bitte notiert das. Historisch.', 'Sehr angenehm. Ich hab überlegt, mich hinzulegen. Aus Zufriedenheit.', 'Entspannt. So entspannt, dass ich fast …'],
+    ['Ich hab aufgepasst. Im Stehen. Das ist bei mir ein Kompliment.', 'Ganz okay. Liegen wäre okayer gewesen.', 'Aufmerksam, aber gemütlich. Mein Stil.'],
+    ['Ich hab mich fast hingelegt. Ihr wisst, was das heißt.', 'Ein bisschen viel. Kleiner, bitte.', 'Ich schau lieber zu, wie ihr das mit Stevie macht.'],
+    ['Ich lieg jetzt. Das ist mein Stopp-Wort.', 'Kushen ist auch eine Antwort.', 'Morgen wieder. Im Stehen. Vielleicht.']
+  ]
+};
+window.EXTRA_LETTERS = [
+  { id: 's1', animal: 'stupsi', unlockLevel: 3, unlock: 'Stupsi Level 3 geschafft', title: 'Post von Stupsi', body: 'Hallo ihr zwei,\n\nich wollte nur sagen: Ich hab’s auch drauf. Hände auf dem Rücken, Kreise an der Schulter, alles ganz entspannt.\n\nIch hab gehört, Stevie bekommt Briefe geschrieben. Ich schreibe jetzt selbst. Das ist der Unterschied.\n\nEs gibt übrigens keinen Wettbewerb. Ich sag ja nur.\n\nEuer Stupsi\n\nP.S. Meine Schale war gestern genau richtig. Stevies war größer, oder?' },
+  { id: 'c1', animal: 'coco', unlockLevel: 2, unlock: 'Coco Level 2 geschafft', title: 'Post von Coco', body: 'Liebe Menschen,\n\nich habe diesen Brief im Liegen geschrieben. Das war bequem.\n\nAber ich will euch was sagen: Eure Hand an meiner Schulter war okay. Ich bin sogar stehen geblieben. Mehrmals. Ihr habt es gesehen.\n\nIhr habt nie nachgesetzt, wenn ich mich hingelegt habe. Das fand ich anständig.\n\nEuer Coco\n(liegend, aber stolz)' }
 ];
